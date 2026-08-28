@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# scratch downloads / local archives (added 2026-08-28 during HQ audit)
+/*.jpeg
+/docs.zip
