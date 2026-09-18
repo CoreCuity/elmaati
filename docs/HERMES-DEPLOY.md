@@ -1,6 +1,14 @@
 # Elmaati on Hermes — Deployment Plan
 
 > [!IMPORTANT]
+> **2026-09-18 — LIVE ON corecuity-HQ (169.58.195.92) as `svc-hermes`.** server-architect is gone and the Mac relocation never ran. The body was rebuilt on the new HQ server:
+> - user `svc-hermes` (uid 1001, nologin, not in sudo/docker/adm) via `core/infra/provision/new-agent.sh hermes 150% 2G` (slice caps: 1.5 CPU, 2 GB, 512 tasks)
+> - Hermes **v0.21.3** fresh install, state restored from the 2026-08-27 attic by `deploy/hq/restore-hermes.sh` (config, .env, SOUL, memories, kanban, profiles analyst/coder/scout). The Codex OAuth login was redone by device flow, not copied.
+> - user units `hermes-serve` (127.0.0.1:9119) and `hermes-gateway`. Discord `Elmaati#1317` and Telegram are both connected, and an outbound test to the operator's Telegram was verified.
+> - Box-wide `/etc/gai.conf` now prefers IPv4, because IPv6 is unroutable on this host.
+> - Open: the gateway warns that the profiles reuse the default Telegram token (it runs standalone, fine for now), and linked SQLite 3.45.1 is flagged for the WAL-reset bug.
+
+> [!IMPORTANT]
 > **2026-07-30 — HOST CHANGE PLANNED.** The operator decided to **relocate** the body from server-architect to the Mac (one identity, one memory, one bot pair; server body stopped-not-wiped as rollback), starting fully sealed with no repo access. See [`HERMES-MAC-RELOCATION.md`](./HERMES-MAC-RELOCATION.md). Every *principle* below still holds — only the host changes. This document remains the record of the server deployment.
 
 **Status 2026-07-18:** Phase 1 DONE — user `elmaati` (uid 1001, no sudo/docker), Hermes **v0.18.2** at `~/.local/bin/hermes`. Phase 2 backend DONE — linger enabled, `hermes-serve.service` (user unit, `127.0.0.1:9119` verified, MemoryMax=1500M) active. Persona DONE — Maâllem text-surface SOUL deployed from `core/elmaati/agents/elmaati-soul.md` (source of truth; stock backed up as `SOUL.md.stock`). Timezone Africa/Casablanca set. **LIVE STATUS (2026-07-18):** Telegram + Discord (`Elmaati#1317`) both live, locked to operator IDs; home channel = operator Telegram DM (outbound verified via `hermes send`). Atelier: profiles `analyst` (gemini-3.5-flash), `scout` + `coder` (gpt-5.5), kanban board validated end-to-end. **Shop rule from smoke test: gemini-flash fails the kanban completion protocol (4/4) — kanban contracts only on protocol-reliable models (gpt-5.5 now; NIM qwen3.5-397b when key lands); flash is for interactive analysis only.** Avatar: `branding/elmaati-avatar-768.png`.
