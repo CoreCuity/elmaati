@@ -45,7 +45,11 @@ echo "✓ hermes: $(as_u "${H}/.local/bin/hermes" --version 2>/dev/null | head -
 if [ ! -f "${H}/.hermes/.restored-from-attic" ]; then
   TMP="$(mktemp -d /root/hermes-restore.XXXXXX)"
   trap 'rm -rf "$TMP"' EXIT
-  tar -xf "$ARCHIVE" --zstd -C "$TMP" home/elmaati/.hermes
+  # Skip the old venv/code at extract time: its files are hard links into ~/.cache/uv, which
+  # isn't in the extract set, so tar fails on them. Fresh code comes from step 2.
+  tar -xf "$ARCHIVE" --zstd -C "$TMP" \
+    --exclude='home/elmaati/.hermes/hermes-agent' --exclude='home/elmaati/.hermes/bin' \
+    home/elmaati/.hermes
   SRC="$TMP/home/elmaati/.hermes"
   rsync -a \
     --exclude 'hermes-agent/' --exclude 'bin/' --exclude 'auth.json' --exclude 'auth.lock' \
