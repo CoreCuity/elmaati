@@ -37,8 +37,9 @@ for p in analyst coder scout; do
   used="$(find "$d/sessions" "$d/memories" -type f 2>/dev/null | head -1)"
   [ -z "$used" ] || { echo "✗ ${p} has sessions/memories (${used}) — not retiring it" >&2; exit 1; }
   install -d -m0700 "$ARCH"
-  tar -C "${HH}/profiles" -czf "${ARCH}/${p}.tgz" "$p"
-  hermes profile delete -y "$p" | sed "s/^/   /"
+  [ -f "${ARCH}/${p}.tgz" ] || tar -C "${HH}/profiles" -czf "${ARCH}/${p}.tgz" "$p"
+  rm -rf "${d}/plugins/fleet-audit"   # root-owned (fleet-audit install) — svc-hermes cannot remove it
+  if [ -f "${d}/config.yaml" ]; then hermes profile delete -y "$p" | sed "s/^/   /"; else rm -rf "$d"; fi
   echo "   ${p}: archived → ${ARCH}/${p}.tgz, deleted"
 done
 
