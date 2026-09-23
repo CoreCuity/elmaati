@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# fleet-kill — the fleet's kill switch on corecuity-HQ (fleet-v1 §8, security baseline MUST #17). Run as root.
+#
+#   sudo fleet-kill contain "<reason>"   stop everything svc-hermes runs, cut its network, keep it from restarting
+#   sudo fleet-kill revoke  "<reason>"   contain + move the fleet's credentials into a root-only quarantine,
+#                                        then print the off-box revocations a human must do
+#   sudo fleet-kill resume  "<reason>"   undo contain (not revoke: revoked credentials need re-issuing)
+#   sudo fleet-kill status
+#
+# From anywhere with SSH:  ssh corecuity-HQ 'sudo fleet-kill contain "why"'
+# Every action is written to the journal (identifier fleet-kill) and posted to the Discord home channel.
+# Contain survives a reboot: the account is expired and lingering is off, so systemd cannot restart it.
+#
+# Source of truth: core/elmaati/deploy/hq/fleet-audit/ (installed by install.sh). Never edit on the server.
+set -uo pipefail
+
+U=svc-hermes
+H="/home/${U}"
+HH="${H}/.hermes"
+MARK=/var/lib/fleet-audit/KILLED
+QUAR=/root/fleet-quarantine
+TAG="fleet-kill"
+ACT="${1:-status}"
+WHY="${2:-}"
+WHO="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
+
+[ "$(id -u)" -eq 0 ] || { echo "✗ run as root (sudo fleet-kill …)" >&2; exit 1; }
+UID_N="$(id -u "$U")"
+
+log()  { logger -t "$TAG" -- "$*"; echo "── $*"; }
+envv() { grep -m1 -E "^$1=" "$2" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"; }
+notify() {
+  local src="${HH}/.env"; [ -f "$src" ] || src="$(ls -1d "${QUAR}"/*/hermes.env 2>/dev/null | tail -1)"
+  local tok ch; tok="$(envv DISCORD_BOT_TOKEN "$src")"; ch="$(envv DISCORD_HOME_CHANNEL "$src")"
+  [ -n "$tok" ] && [ -n "$ch" ] || { echo "   (no Discord token/channel — notice not sent)"; return; }
+  python3 -c 'import json,sys; print(json.dumps({"content": sys.argv[1]}))' "$1" \
+    | curl -fsS -o /dev/null -X POST "https://discord.com/api/v10/channels/${ch}/messages" \
+        -H "Authorization: Bot ${tok}" -H "Content-Type: application/json" --data-binary @- \
+    || echo "   (Discord notice failed)"
+}
+need_reason() { [ -n "$WHY" ] || { echo "✗ give a reason: fleet-kill $ACT \"<reason>\"" >&2; exit 2; }; }
+
+net_rules() { # $1 = -C (check) | -I (insert) | -D (delete)
+  local rc=0 t
+  for t in iptables ip6tables; do
+    if [ "$1" = "-I" ]; then
+      "$t" -C OUTPUT -m owner --uid-owner "$UID_N" -m comment --comment "$TAG" -j REJECT 2>/dev/null \
+        || "$t" -I OUTPUT 1 -m owner --uid-owner "$UID_N" -m comment --comment "$TAG" -j REJECT || rc=1
+    elif [ "$1" = "-D" ]; then
+      while "$t" -D OUTPUT -m owner --uid-owner "$UID_N" -m comment --comment "$TAG" -j REJECT 2>/dev/null; do :; done
+    else
+      "$t" -C OUTPUT -m owner --uid-owner "$UID_N" -m comment --comment "$TAG" -j REJECT 2>/dev/null || rc=1
+    fi
+  done
+  return $rc
+}
+
+status() {
+  echo "fleet-kill status on $(hostname) — $(date -Is)"
+  if [ -f "$MARK" ]; then echo "  state:      KILLED — $(tr '\n' ' ' < "$MARK")"; else echo "  state:      running (no kill marker)"; fi
+  if net_rules -C; then echo "  network:    blocked (iptables + ip6tables)"; else echo "  network:    open"; fi
+  echo "  linger:     $(loginctl show-user "$U" -p Linger --value 2>/dev/null || echo 'no session')"
+  echo "  account:    $(chage -l "$U" | awk -F': ' '/Account expires/{print $2}') expiry · $(passwd -S "$U" | awk '{print ($2=="L")?"locked":"unlocked"}')"
+  local n; n="$(pgrep -u "$U" -c || true)"
+  echo "  processes:  ${n:-0}"; [ "${n:-0}" -gt 0 ] && ps -u "$U" -o pid=,args= | cut -c1-110 | sed 's/^/              /'
+  ls -1d "${QUAR}"/*/ 2>/dev/null | sed 's/^/  quarantine: /'
+  return 0
+}
+
+contain() {
+  install -d -m0750 "$(dirname "$MARK")"
+  printf 'action=%s by=%s at=%s reason=%s\n' "$ACT" "$WHO" "$(date -Is)" "$WHY" > "$MARK"
+  log "CONTAIN by ${WHO}: ${WHY}"
+  net_rules -I && log "network cut for uid ${UID_N}"
+  loginctl disable-linger "$U" && log "lingering disabled"
+  usermod -L "$U" >/dev/null && chage -E 0 "$U" && log "account locked + expired (nothing can start as ${U})"
+  systemctl stop "user@${UID_N}.service" && log "user manager stopped (gateway, backend, timers)"
+  loginctl terminate-user "$U" 2>/dev/null || true
+  pkill -KILL -u "$U" 2>/dev/null || true
+  sleep 1
+  local left; left="$(pgrep -u "$U" -c || true)"
+  if [ "${left:-0}" -eq 0 ]; then log "no ${U} processes left"; else log "⚠ ${left} ${U} processes still alive"; fi
+}
+
+revoke() {
+  local q; q="${QUAR}/$(date -u +%Y%m%dT%H%M%SZ)"
+  install -d -m0700 "$QUAR" "$q"
+  local f
+  for f in "${HH}/.env:hermes.env" "${HH}/auth.json:auth.json" "${H}/.ssh/fleet_ed25519:fleet_ed25519"; do
+    [ -f "${f%%:*}" ] && mv "${f%%:*}" "${q}/${f##*:}" && log "quarantined ${f%%:*}"
+  done
+  for f in "${HH}"/profiles/*/.env "${HH}"/profiles/*/auth.json; do
+    [ -f "$f" ] || continue
+    local p; p="$(basename "$(dirname "$f")")"
+    mv "$f" "${q}/${p}-$(basename "$f" | sed 's/^\.//')" && log "quarantined ${f}"
+  done
+  for f in "${H}/.codex" "${H}/.claude" "${H}/.config/gh"; do
+    [ -e "$f" ] && mv "$f" "${q}/$(basename "$f" | sed 's/^\.//')" && log "quarantined ${f}"
+  done
+  chmod -R go-rwx "$q"
+  cat <<EOF
+
+Credentials are off the box's live paths (${q}). Revoke them at the source — a human must do these:
+  1. Discord  — developer portal → Elmaati#1317 → Bot → Reset Token
+  2. Telegram — @BotFather → /revoke → the Elmaati bot
+  3. Codex / OpenAI — revoke the fleet's OAuth session (chatgpt.com → Settings → Security → log out devices)
+  4. Plane    — delete the fleet@corecuity.com API token (label fleet-agent), as an admin
+  5. Mailcow  — deactivate fleet@corecuity.com
+  6. SSH      — remove the fleet key from fleetwatch@corecuity-HQ and fleetwatch@corecuity-clients
+                (~fleetwatch/.ssh/authorized_keys)
+Resuming after revoke needs freshly issued credentials — fleet-kill resume will not bring these back.
+EOF
+}
+
+resume() {
+  [ -f "$MARK" ] || { echo "nothing to resume (no kill marker)"; exit 0; }
+  grep -q '^action=revoke' "$MARK" && ls -1d "${QUAR}"/*/ >/dev/null 2>&1 && [ ! -f "${HH}/.env" ] && {
+    echo "✗ this was a revoke — issue new credentials and restore ${HH}/.env first" >&2; exit 3; }
+  log "RESUME by ${WHO}: ${WHY}"
+  net_rules -D && log "network restored"
+  chage -E -1 "$U" && usermod -U "$U" >/dev/null 2>&1; log "account unexpired + unlocked"
+  rm -f "$MARK"
+  loginctl enable-linger "$U" && log "lingering enabled → user manager + gateway start"
+  local i; for i in $(seq 1 30); do
+    sudo -u "$U" XDG_RUNTIME_DIR="/run/user/${UID_N}" systemctl --user is-active --quiet hermes-gateway.service && break
+    sleep 2
+  done
+  sudo -u "$U" XDG_RUNTIME_DIR="/run/user/${UID_N}" systemctl --user is-active --quiet hermes-gateway.service \
+    && log "gateway is running" || log "⚠ gateway did not come up within 60s — check: journalctl _UID=${UID_N}"
+}
+
+case "$ACT" in
+  status)  status ;;
+  contain) need_reason; contain; notify "🛑 **Fleet contained** on corecuity-HQ by ${WHO}: ${WHY}. Elmaati is stopped and offline. Undo: \`sudo fleet-kill resume \"<reason>\"\`"; status ;;
+  revoke)  need_reason; contain; revoke; notify "🛑 **Fleet contained + credentials quarantined** on corecuity-HQ by ${WHO}: ${WHY}. Off-box revocations are pending — see the fleet-kill output."; status ;;
+  resume)  need_reason; resume; notify "✅ **Fleet resumed** on corecuity-HQ by ${WHO}: ${WHY}."; status ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
+esac

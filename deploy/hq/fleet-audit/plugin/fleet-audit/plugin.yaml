@@ -1,0 +1,3 @@
+name: fleet-audit
+version: "1.0"
+description: Fleet v1 tool-call log (MUST #13) — every tool call, approval and delegation to journald, where svc-hermes cannot edit or delete it.

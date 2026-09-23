@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""fleet-audit-watch — alert when the tool-call log is off, tampered with or bypassed (runs as root, timer).
+
+svc-hermes owns its config and processes, so it could switch the plugin off. It cannot hide that it did:
+this root-owned check runs every 10 minutes and alerts the Discord home channel when
+  1. the collector is not running,
+  2. an installed plugin copy differs from the root-held reference, or has vanished,
+  3. a Hermes home no longer has fleet-audit in plugins.enabled (or has it in plugins.disabled),
+  4. a Hermes process that has been up >2 min never announced itself (no audit.loaded from its PID),
+  5. anyone other than svc-hermes wrote into the log.
+A kill-switch marker (/var/lib/fleet-audit/KILLED) pauses the checks. Same alert repeats at most every 6 h.
+
+Source of truth: core/elmaati/deploy/hq/fleet-audit/ (installed by install.sh). --dry-run prints instead
+of posting.
+"""
+import datetime
+import glob
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
+import yaml
+
+USER = "svc-hermes"
+HH = f"/home/{USER}/.hermes"
+REF = "/usr/local/lib/fleet-audit/plugin/fleet-audit"
+LOG_DIR = "/var/lib/fleet-audit"
+STATE = "/var/lib/fleet-audit-watch/state.json"
+REPEAT_S = 6 * 3600
+
+
+def homes():
+    return [HH] + sorted(glob.glob(f"{HH}/profiles/*/"))
+
+
+def digest(d):
+    h = hashlib.sha256()
+    for f in sorted(os.listdir(d)):
+        p = os.path.join(d, f)
+        if os.path.isfile(p):
+            h.update(f.encode() + b"\0" + open(p, "rb").read())
+    return h.hexdigest()
+
+
+def announced_pids():
+    pids, foreign = set(), []
+    uid = str(int(subprocess.check_output(["id", "-u", USER]).strip()))
+    days = [datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=n) for n in range(3)]
+    for d in days:
+        path = f"{LOG_DIR}/{d:%Y-%m-%d}.jsonl"
+        if not os.path.exists(path):
+            continue
+        for raw in open(path, encoding="utf-8"):
+            try:
+                e = json.loads(raw)
+            except ValueError:
+                continue
+            if e.get("uid") != uid:
+                foreign.append(f"uid={e.get('uid')} comm={e.get('comm')} event={e.get('event')}")
+            if e.get("event") == "audit.loaded":
+                pids.add(str(e.get("pid")))
+    return pids, foreign
+
+
+def hermes_processes():
+    out = subprocess.run(["ps", "-u", USER, "-o", "pid=,etimes=,args="], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        pid, age, args = line.split(None, 2)
+        if "hermes" in args and "python" in args and int(age) > 120:
+            yield pid, args
+
+
+def problems():
+    found = []
+    if subprocess.run(["systemctl", "is-active", "--quiet", "fleet-audit-collector.service"]).returncode:
+        found.append("collector fleet-audit-collector.service is not running")
+    ref = digest(REF)
+    for home in homes():
+        name = "default" if home == HH else os.path.basename(home.rstrip("/"))
+        inst = os.path.join(home, "plugins", "fleet-audit")
+        if not os.path.isdir(inst):
+            found.append(f"[{name}] plugin directory is missing")
+        elif digest(inst) != ref:
+            found.append(f"[{name}] plugin files differ from the root-held reference")
+        try:
+            cfg = yaml.safe_load(open(os.path.join(home, "config.yaml"))) or {}
+        except Exception as e:
+            found.append(f"[{name}] config.yaml unreadable: {e}")
+            continue
+        pl = cfg.get("plugins") or {}
+        if "fleet-audit" not in (pl.get("enabled") or []) or "fleet-audit" in (pl.get("disabled") or []):
+            found.append(f"[{name}] fleet-audit is not enabled in config.yaml")
+    pids, foreign = announced_pids()
+    for pid, args in hermes_processes():
+        if pid not in pids:
+            found.append(f"Hermes process {pid} is running without the tool-call log ({args[:80]})")
+    if foreign:
+        found.append(f"{len(foreign)} log entries were written by another user, e.g. {foreign[0]}")
+    return found
+
+
+def env(key):
+    for line in open(f"{HH}/.env", encoding="utf-8"):
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def post(text):
+    tok, ch = env("DISCORD_BOT_TOKEN"), env("DISCORD_HOME_CHANNEL")
+    req = urllib.request.Request(
+        f"https://discord.com/api/v10/channels/{ch}/messages", method="POST",
+        data=json.dumps({"content": text[:1900]}).encode(),
+        headers={"Authorization": f"Bot {tok}", "Content-Type": "application/json",
+                 "User-Agent": "fleet-audit-watch (corecuity, 1.0)"})
+    urllib.request.urlopen(req, timeout=15).read()
+
+
+def main():
+    dry = "--dry-run" in sys.argv
+    if os.path.exists(f"{LOG_DIR}/KILLED"):
+        print("kill switch engaged — checks paused")
+        return 0
+    found = problems()
+    if not found:
+        print("ok")
+        return 0
+    text = "🚨 **Tool-call log problem on corecuity-HQ** — the fleet may be acting unlogged.\n" + \
+           "\n".join(f"• {p}" for p in found) + \
+           "\nCheck: `sudo fleet-audit-watch --dry-run` · stop the fleet: `sudo fleet-kill contain`"
+    print(text)
+    if dry:
+        return 1
+    os.makedirs(os.path.dirname(STATE), mode=0o700, exist_ok=True)
+    key = hashlib.sha256("\n".join(found).encode()).hexdigest()
+    try:
+        st = json.load(open(STATE))
+    except Exception:
+        st = {}
+    if st.get("key") == key and time.time() - st.get("at", 0) < REPEAT_S:
+        return 1
+    post(text)
+    json.dump({"key": key, "at": time.time()}, open(STATE, "w"))
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

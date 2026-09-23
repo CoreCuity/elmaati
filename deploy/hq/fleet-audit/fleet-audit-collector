@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""fleet-audit-collector — copy fleet-audit journal entries into append-only daily files (runs as root).
+
+Follows journald for SYSLOG_IDENTIFIER=fleet-audit and appends one JSON line per entry to
+/var/lib/fleet-audit/YYYY-MM-DD.jsonl (UTC). Each line carries journald's own trusted _UID/_PID/_COMM,
+so an entry written by anything other than svc-hermes is visible as such. New files get `chattr +a`
+(append-only, even for their owner). The last-copied __CURSOR is saved after every write, so a restart
+resumes exactly where it stopped: no gap, no duplicate.
+
+Source of truth: core/elmaati/deploy/hq/fleet-audit/ (installed by install.sh).
+"""
+import datetime
+import json
+import os
+import subprocess
+import sys
+
+DIR = "/var/lib/fleet-audit"
+CURSOR = os.path.join(DIR, ".cursor")
+
+
+def main() -> int:
+    os.makedirs(DIR, mode=0o750, exist_ok=True)
+    cmd = ["journalctl", "--follow", "--output=json", "--all", "SYSLOG_IDENTIFIER=fleet-audit"]
+    try:
+        cursor = open(CURSOR).read().strip()
+    except FileNotFoundError:
+        cursor = ""
+    cmd += [f"--after-cursor={cursor}"] if cursor else ["--lines=all"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True, bufsize=1)
+    day, out = None, None
+    for raw in proc.stdout:
+        try:
+            j = json.loads(raw)
+        except ValueError:
+            continue
+        ts = int(j.get("__REALTIME_TIMESTAMP", "0")) / 1e6
+        try:
+            event = json.loads(j.get("MESSAGE", ""))
+        except (ValueError, TypeError):
+            event = {"unparsed": j.get("MESSAGE")}
+        line = json.dumps({
+            "at": datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).isoformat(timespec="milliseconds"),
+            "uid": j.get("_UID"), "pid": j.get("_PID"), "comm": j.get("_COMM"),
+            **event,
+        }, ensure_ascii=False, sort_keys=False)
+        d = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
+        if d != day:
+            if out:
+                out.close()
+            path = os.path.join(DIR, f"{d}.jsonl")
+            fresh = not os.path.exists(path)
+            out = open(path, "a", encoding="utf-8")
+            os.chmod(path, 0o640)
+            if fresh:
+                subprocess.run(["chattr", "+a", path], check=False)
+            day = d
+        out.write(line + "\n")
+        out.flush()
+        os.fsync(out.fileno())
+        tmp = CURSOR + ".tmp"
+        with open(tmp, "w") as c:
+            c.write(j["__CURSOR"])
+        os.replace(tmp, CURSOR)
+    return proc.wait() or 1  # journalctl -f never ends on its own; let systemd restart us
+
+
+if __name__ == "__main__":
+    sys.exit(main())
