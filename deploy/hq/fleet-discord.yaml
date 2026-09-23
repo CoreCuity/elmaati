@@ -1,0 +1,19 @@
+# Fleet v1 Discord layout (docs/architecture/fleet-v1.md §7), mapped onto the existing CoreCuity server.
+# Decided 2026-09-23: reuse existing channels, add #briefing, #approvals, #odae and the 🗂 BACK OFFICE category.
+# One bot (Elmaati#1317, 1527883049952608317); gateway.profile_routes are generated from `profile:` below.
+guild_id: "1505273757051130006"
+
+channels:
+  # 🏠 CORECUITY
+  hq:          {id: "1527909251593539694", name: elmaati-home,   profile: default}   # talk to Elmaati
+  briefing:    {id: "1552185205010337862", name: briefing,       profile: default}   # 08:00 brief, EOD
+  approvals:   {id: "1552185205958254624", name: approvals,      profile: default}   # T2–T4 buttons
+  # 🛰️ OPS & INFRA
+  alerts:      {id: "1505316048809885807", name: infra-alerts,   profile: sentinel}
+  # 📦 CLIENTS — Ads and Clerk post here; inbound stays with Elmaati
+  adolia:      {id: "1505316062860673184", name: adolia,         profile: default}
+  odae:        {id: "1552185207447101470", name: odae,           profile: default}
+  desirs:      {id: "1505316064542589040", name: desirs-dorient, profile: default}
+  # 🗂 BACK OFFICE (category 1552185202552606783)
+  ledger:      {id: "1552185208583880774", name: ledger,         profile: clerk}
+  kanban:      {id: "1552185209657499658", name: kanban,         profile: default}
