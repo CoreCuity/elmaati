@@ -96,7 +96,7 @@ as_u systemctl --user restart hermes-gateway.service hermes-serve.service
 sleep 20
 
 echo; echo "verify:"
-systemctl is-active fleet-audit-collector.service | sed 's/^/   collector: /'
+systemctl is-active fleet-audit-collector.service | sed 's/^/   collector: /' || true
 ls -la /var/lib/fleet-audit/ | sed 's/^/   /'
 grep -h '"audit.loaded"' /var/lib/fleet-audit/*.jsonl 2>/dev/null | tail -8 | cut -c1-200 | sed 's/^/   /'
 /usr/local/sbin/fleet-audit-watch --dry-run | sed 's/^/   watch: /' || true

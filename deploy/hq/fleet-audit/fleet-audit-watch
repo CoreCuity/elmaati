@@ -3,7 +3,7 @@
 
 svc-hermes owns its config and processes, so it could switch the plugin off. It cannot hide that it did:
 this root-owned check runs every 10 minutes and alerts the Discord home channel when
-  1. the collector is not running,
+  1. the collector is not running, or has fallen behind the journal (e.g. crash-looping),
   2. an installed plugin copy differs from the root-held reference, or has vanished,
   3. a Hermes home no longer has fleet-audit in plugins.enabled (or has it in plugins.disabled),
   4. a Hermes process that has been up >2 min never announced itself (no audit.loaded from its PID),
@@ -78,6 +78,18 @@ def problems():
     found = []
     if subprocess.run(["systemctl", "is-active", "--quiet", "fleet-audit-collector.service"]).returncode:
         found.append("collector fleet-audit-collector.service is not running")
+    # A crash-looping collector can look active between restarts; lag is the real signal.
+    last = subprocess.run(["journalctl", "SYSLOG_IDENTIFIER=fleet-audit", "-n", "1", "-o", "json"],
+                          capture_output=True, text=True).stdout.strip()
+    if last:
+        j = json.loads(last)
+        try:
+            saved = open(f"{LOG_DIR}/.cursor").read().strip()
+        except OSError:
+            saved = ""
+        age = time.time() - int(j["__REALTIME_TIMESTAMP"]) / 1e6
+        if saved != j["__CURSOR"] and age > 120:
+            found.append(f"collector is behind: newest journal entry ({int(age // 60)} min old) not yet in the log files")
     ref = digest(REF)
     for home in homes():
         name = "default" if home == HH else os.path.basename(home.rstrip("/"))

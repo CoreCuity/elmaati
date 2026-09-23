@@ -51,8 +51,8 @@ def main() -> int:
             path = os.path.join(DIR, f"{d}.jsonl")
             fresh = not os.path.exists(path)
             out = open(path, "a", encoding="utf-8")
-            os.chmod(path, 0o640)
-            if fresh:
+            if fresh:  # once append-only, even root's chmod is refused — so only on creation
+                os.chmod(path, 0o640)
                 subprocess.run(["chattr", "+a", path], check=False)
             day = d
         out.write(line + "\n")
