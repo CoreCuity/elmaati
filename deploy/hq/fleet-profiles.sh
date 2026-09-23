@@ -34,7 +34,7 @@ say "1/3 retire pre-fleet profiles"
 for p in analyst coder scout; do
   d="${HH}/profiles/${p}"
   [ -d "$d" ] || { echo "   ${p}: already gone"; continue; }
-  used="$(find "$d/sessions" "$d/memories" -type f 2>/dev/null | head -1)"
+  used="$(find "$d/sessions" "$d/memories" -type f 2>/dev/null | head -1 || true)"
   [ -z "$used" ] || { echo "✗ ${p} has sessions/memories (${used}) — not retiring it" >&2; exit 1; }
   install -d -m0700 "$ARCH"
   [ -f "${ARCH}/${p}.tgz" ] || tar -C "${HH}/profiles" -czf "${ARCH}/${p}.tgz" "$p"
