@@ -131,7 +131,7 @@ def main():
         return 0
     text = "🚨 **Tool-call log problem on corecuity-HQ** — the fleet may be acting unlogged.\n" + \
            "\n".join(f"• {p}" for p in found) + \
-           "\nCheck: `sudo fleet-audit-watch --dry-run` · stop the fleet: `sudo fleet-kill contain`"
+           "\nCheck: `sudo fleet-audit-watch --dry-run` · stop the fleet: `sudo fleet-kill contain \"<reason>\"`"
     print(text)
     if dry:
         return 1

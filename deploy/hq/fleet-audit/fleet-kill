@@ -60,7 +60,7 @@ status() {
   if [ -f "$MARK" ]; then echo "  state:      KILLED — $(tr '\n' ' ' < "$MARK")"; else echo "  state:      running (no kill marker)"; fi
   if net_rules -C; then echo "  network:    blocked (iptables + ip6tables)"; else echo "  network:    open"; fi
   echo "  linger:     $(loginctl show-user "$U" -p Linger --value 2>/dev/null || echo 'no session')"
-  echo "  account:    $(chage -l "$U" | awk -F': ' '/Account expires/{print $2}') expiry · $(passwd -S "$U" | awk '{print ($2=="L")?"locked":"unlocked"}')"
+  echo "  account:    expires $(chage -l "$U" | awk -F': ' '/Account expires/{print $2}')"
   local n; n="$(pgrep -u "$U" -c || true)"
   echo "  processes:  ${n:-0}"; [ "${n:-0}" -gt 0 ] && ps -u "$U" -o pid=,args= | cut -c1-110 | sed 's/^/              /'
   ls -1d "${QUAR}"/*/ 2>/dev/null | sed 's/^/  quarantine: /'
@@ -73,7 +73,7 @@ contain() {
   log "CONTAIN by ${WHO}: ${WHY}"
   net_rules -I && log "network cut for uid ${UID_N}"
   loginctl disable-linger "$U" && log "lingering disabled"
-  usermod -L "$U" >/dev/null && chage -E 0 "$U" && log "account locked + expired (nothing can start as ${U})"
+  chage -E 0 "$U" && log "account expired (PAM refuses to start anything as ${U})"
   systemctl stop "user@${UID_N}.service" && log "user manager stopped (gateway, backend, timers)"
   loginctl terminate-user "$U" 2>/dev/null || true
   pkill -KILL -u "$U" 2>/dev/null || true
@@ -118,11 +118,11 @@ resume() {
     echo "✗ this was a revoke — issue new credentials and restore ${HH}/.env first" >&2; exit 3; }
   log "RESUME by ${WHO}: ${WHY}"
   net_rules -D && log "network restored"
-  chage -E -1 "$U" && usermod -U "$U" >/dev/null 2>&1; log "account unexpired + unlocked"
+  chage -E -1 "$U" && log "account unexpired"
   rm -f "$MARK"
   loginctl enable-linger "$U" && log "lingering enabled → user manager + gateway start"
   local i; for i in $(seq 1 30); do
-    sudo -u "$U" XDG_RUNTIME_DIR="/run/user/${UID_N}" systemctl --user is-active --quiet hermes-gateway.service && break
+    sudo -u "$U" XDG_RUNTIME_DIR="/run/user/${UID_N}" systemctl --user is-active --quiet hermes-gateway.service 2>/dev/null && break
     sleep 2
   done
   sudo -u "$U" XDG_RUNTIME_DIR="/run/user/${UID_N}" systemctl --user is-active --quiet hermes-gateway.service \
