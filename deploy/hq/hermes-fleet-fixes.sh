@@ -149,13 +149,16 @@ PY
 say "6/7 nightly gateway restart timer"
 UD="${H}/.config/systemd/user"
 as_u mkdir -p "$UD"
+# The wrapper (quiet planned-restart notice + reminder) is installed separately, see its header.
+[ -x "${H}/.local/bin/hermes-nightly-restart.sh" ] \
+  || echo "   ⚠ ${H}/.local/bin/hermes-nightly-restart.sh missing — install deploy/hq/hermes-nightly-restart.sh"
 cat > "${UD}/hermes-gateway-restart.service" <<'EOF'
 # Managed by core/elmaati/deploy/hq/hermes-fleet-fixes.sh
 [Unit]
 Description=Nightly restart of the Hermes gateway (upstream memory growth #58817)
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/systemctl --user restart hermes-gateway.service
+ExecStart=%h/.local/bin/hermes-nightly-restart.sh
 EOF
 cat > "${UD}/hermes-gateway-restart.timer" <<'EOF'
 [Unit]
