@@ -42,7 +42,7 @@ def main():
     hdr = {"Authorization": f"Bot {token}", "User-Agent": "corecuity-fleet (permissions, 1.0)",
            "Content-Type": "application/json", "X-Audit-Log-Reason": reason}
 
-    def call(method, path, body=None):
+    def call(method, path, body=None, soft=False):
         if dry and method != "GET":
             print(f"   DRY {method} {path} {json.dumps(body) if body else ''}")
             return {}
@@ -56,7 +56,11 @@ def main():
                 if e.code == 429:
                     time.sleep(float(json.load(e).get("retry_after", 1)) + 0.3)
                     continue
-                raise SystemExit(f"✗ {method} {path}: {e.code} {e.read().decode()[:200]}")
+                msg = f"{method} {path}: {e.code} {e.read().decode()[:200]}"
+                if soft:
+                    print(f"   ⚠ {msg}")
+                    return None
+                raise SystemExit(f"✗ {msg}")
 
     chans = call("GET", f"/guilds/{guild}/channels")
     roles = call("GET", f"/guilds/{guild}/roles")
@@ -97,8 +101,9 @@ def main():
     print("── 3/4 leftover roles")
     for r in roles:
         if r["name"] in LEFTOVER_ROLES and not r["managed"]:
-            call("DELETE", f"/guilds/{guild}/roles/{r['id']}")
-            print(f"   deleted role {r['name']}")
+            # Fails when the role sits above the caller's highest role (Discord hierarchy, even for admins).
+            if call("DELETE", f"/guilds/{guild}/roles/{r['id']}", soft=True) is not None:
+                print(f"   deleted role {r['name']}")
 
     print("── 4/4 invites")
     for inv in call("GET", f"/guilds/{guild}/invites"):
