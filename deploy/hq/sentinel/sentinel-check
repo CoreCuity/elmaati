@@ -3,7 +3,7 @@
 
 No model: every check is a fixed threshold from sentinel.yaml. It reads hosts only through the fleet's
 forced-command key (fleet-status JSON), probes public endpoints over HTTPS, and posts to #infra-alerts
-as Elmaati — only when a problem appears, changes or clears. `--digest` posts the daily summary (the
+as Elmaati — only when a problem appears, escalates or clears. `--digest` posts the daily summary (the
 dead-man signal: no digest by 08:15 means the watch itself is down). `--dry-run` prints instead of posting.
 
 Source of truth: core/elmaati/deploy/hq/sentinel/ (installed root-owned by install.sh).
@@ -18,6 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zoneinfo
 
 import yaml
 
@@ -26,6 +27,29 @@ STATE = os.path.expanduser("~/.local/state/sentinel/state.json")
 KEY = os.path.expanduser("~/.ssh/fleet_ed25519")
 ENV = os.path.expanduser("~/.hermes/.env")
 UA = "corecuity-sentinel (v0; +https://corecuity.com)"
+TZ = zoneinfo.ZoneInfo("Africa/Casablanca")   # founders read times in Moroccan time, not the server's CEST
+
+CRIT, WARN = "🔴", "🟠"
+# Order and headings of the groups in a message.
+GROUPS = [("down", "Sites down"), ("tls", "Certificates"), ("backup", "Backups"),
+          ("host", "Servers"), ("expiry", "Expiring credentials")]
+
+
+def problem(sev, group, subject, detail):
+    return {"sev": sev, "group": group, "subject": subject, "detail": detail}
+
+
+def why(e):
+    """A network error in plain words, not a Python traceback."""
+    if isinstance(e, ConnectionRefusedError):
+        return "connection refused (nothing listening on 443)"
+    if isinstance(e, (TimeoutError, socket.timeout)):
+        return "no answer (timed out)"
+    if isinstance(e, socket.gaierror):
+        return "DNS lookup failed"
+    if isinstance(e, urllib.error.URLError) and getattr(e, "reason", None):
+        return why(e.reason) if isinstance(e.reason, Exception) else str(e.reason)
+    return f"{e.__class__.__name__}: {str(e)[:60]}"
 
 
 def fleet_status(addr):
@@ -39,38 +63,41 @@ def check_host(name, spec, th, ignore, now):
     try:
         d = fleet_status(spec["addr"])
     except Exception as e:
-        found[f"{name}:unreachable"] = f"🔴 **{name}**: fleet-status unreachable ({e.__class__.__name__}) — the watch is blind on this host"
+        found[f"{name}:unreachable"] = problem(CRIT, "host", name, f"can't read its status ({why(e)}) — the watch is blind here")
         return found, info
     for disk in d["disks"]:
         pct, mnt = disk["used_pct"], disk["mount"]
-        if pct >= th["disk_crit_pct"]:
-            found[f"{name}:disk:{mnt}"] = f"🔴 **{name}**: disk `{mnt}` {pct}% full (critical ≥ {th['disk_crit_pct']}%)"
-        elif pct >= th["disk_warn_pct"]:
-            found[f"{name}:disk:{mnt}"] = f"🟠 **{name}**: disk `{mnt}` {pct}% full (warning ≥ {th['disk_warn_pct']}%)"
+        if pct >= th["disk_warn_pct"]:
+            sev = CRIT if pct >= th["disk_crit_pct"] else WARN
+            found[f"{name}:disk:{mnt}"] = problem(sev, "host", name, f"disk `{mnt}` is {pct}% full")
     m = d["memory_kb"]
     avail = 100 * m["MemAvailable"] / m["MemTotal"]
     if avail < th["mem_available_min_pct"]:
-        found[f"{name}:memory"] = f"🟠 **{name}**: only {avail:.0f}% memory available (< {th['mem_available_min_pct']}%)"
+        found[f"{name}:memory"] = problem(WARN, "host", name, f"only {avail:.0f}% memory free")
     for unit in d["services"]["failed_system_units"]:
         if unit not in ignore:
-            found[f"{name}:failed:{unit}"] = f"🔴 **{name}**: service `{unit}` is in failed state"
+            found[f"{name}:failed:{unit}"] = problem(CRIT, "host", name, f"service `{unit}` has failed")
     units = {u["unit"]: u for u in d.get("backup_units", [])}
     for unit in spec.get("backups", []):
+        label = unit.removesuffix(".service")
         u = units.get(unit)
         if not u:
-            found[f"{name}:backup:{unit}"] = f"🔴 **{name}**: backup `{unit}` not found on the host"
+            found[f"{name}:backup:{unit}"] = problem(CRIT, "backup", label, f"not found on {name}")
             continue
         if u["result"] != "success":
-            found[f"{name}:backup:{unit}"] = f"🔴 **{name}**: backup `{unit}` last run failed (result `{u['result']}`, exit {u['exit_status']})"
+            found[f"{name}:backup:{unit}"] = problem(CRIT, "backup", label, f"last run failed on {name} (exit {u['exit_status']})")
             continue
         fin = u.get("finished") or ""
         age_h = (now - int(fin.lstrip("@"))) / 3600 if fin.startswith("@") and fin != "@0" else None
         if age_h is None or age_h > th["backup_max_age_h"]:
-            when = "never" if age_h is None else f"{age_h:.0f} h ago"
-            found[f"{name}:backup:{unit}"] = f"🔴 **{name}**: backup `{unit}` last succeeded {when} (limit {th['backup_max_age_h']} h)"
+            when = "has never run" if age_h is None else f"last succeeded {age_h:.0f} h ago"
+            found[f"{name}:backup:{unit}"] = problem(CRIT, "backup", label, f"{when} on {name} (limit {th['backup_max_age_h']} h)")
+    parts = []
     if d["host"]["reboot_required"]:
-        info.append(f"{name}: reboot pending ({len(d['host']['reboot_required_pkgs'])} packages)")
-    info.append(f"{name}: {d['apt']['upgradable']} package updates available")
+        parts.append("reboot pending")
+    if d["apt"]["upgradable"]:
+        parts.append(f"{d['apt']['upgradable']} updates waiting")
+    info.append(f"**{name}** — " + (" · ".join(parts) if parts else "up to date"))
     return found, info
 
 
@@ -82,15 +109,14 @@ def check_endpoint(entry, th, now):
         with socket.create_connection((host, 443), timeout=10) as s, ctx.wrap_socket(s, server_hostname=host) as t:
             not_after = ssl.cert_time_to_seconds(t.getpeercert()["notAfter"])
         days = (not_after - now) / 86400
-        if days < th["tls_crit_days"]:
-            found[f"tls:{host}"] = f"🔴 **{host}**: TLS certificate expires in {days:.1f} days"
-        elif days < th["tls_warn_days"]:
-            found[f"tls:{host}"] = f"🟠 **{host}**: TLS certificate expires in {days:.0f} days"
+        if days < th["tls_warn_days"]:
+            sev = CRIT if days < th["tls_crit_days"] else WARN
+            found[f"tls:{host}"] = problem(sev, "tls", host, f"certificate expires in {days:.0f} days")
     except ssl.SSLCertVerificationError as e:
-        found[f"tls:{host}"] = f"🔴 **{host}**: TLS certificate invalid ({e.verify_message})"
+        found[f"tls:{host}"] = problem(CRIT, "tls", host, f"certificate invalid ({e.verify_message})")
         return found
     except Exception as e:
-        found[f"up:{host}"] = f"🔴 **{host}**: unreachable on 443 ({e.__class__.__name__}: {str(e)[:80]})"
+        found[f"up:{host}"] = problem(CRIT, "down", host, why(e))
         return found
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -102,10 +128,10 @@ def check_endpoint(entry, th, now):
     except urllib.error.HTTPError as e:
         code = e.code
     except Exception as e:
-        found[f"up:{host}"] = f"🔴 **{host}**: HTTPS request failed ({e.__class__.__name__}: {str(e)[:80]})"
+        found[f"up:{host}"] = problem(CRIT, "down", host, why(e))
         return found
     if code >= 400 and code not in (401, 403):   # an auth wall still means the service is up
-        found[f"up:{host}"] = f"🔴 **{host}/{path}**: HTTP {code}"
+        found[f"up:{host}"] = problem(CRIT, "down", f"{host}/{path}".rstrip("/"), f"answers HTTP {code}")
     return found
 
 
@@ -114,17 +140,37 @@ def check_expiries(items, now):
     today = datetime.date.fromtimestamp(now)
     for it in items:
         days = (it["date"] - today).days
+        date = it["date"].strftime("%-d %b")
         if days < 0:
-            found[f"expiry:{it['name']}"] = f"🔴 **{it['name']}** EXPIRED {-days} days ago — {it['action']}"
+            found[f"expiry:{it['name']}"] = problem(CRIT, "expiry", it["name"], f"**expired** on {date} → {it['action']}")
         elif days <= 14:
             step = next(s for s in (1, 3, 7, 14) if days <= s)   # re-alerts as it crosses 7, 3, 1
-            found[f"expiry:{it['name']}:{step}"] = f"🟠 **{it['name']}** expires in {days} days ({it['date']}) — {it['action']}"
+            sev = CRIT if days <= 3 else WARN
+            found[f"expiry:{it['name']}:{step}"] = problem(sev, "expiry", it["name"],
+                                                           f"expires **{date}** (in {days} days) → {it['action']}")
     return found
+
+
+def render(problems):
+    """Problems grouped under headings, worst first within each group."""
+    out = []
+    for group, heading in GROUPS:
+        rows = sorted((p for p in problems if p["group"] == group), key=lambda p: (p["sev"] != CRIT, p["subject"]))
+        if rows:
+            out += ([""] if out else []) + [f"**{heading}**"]
+            out += [f"{p['sev']} **{p['subject']}** — {p['detail']}" for p in rows]
+    return out
+
+
+def counts(problems):
+    c = sum(p["sev"] == CRIT for p in problems)
+    w = len(problems) - c
+    return " · ".join(x for x in (f"{c} critical" if c else "", f"{w} warning{'s' * (w != 1)}" if w else "") if x)
 
 
 def post(text, channel, dry):
     if dry:
-        print("--- would post ---\n" + text)
+        print("--- would post ---\n" + text + "\n")
         return
     token = next(l.split("=", 1)[1].strip().strip("\"'") for l in open(ENV) if l.startswith("DISCORD_BOT_TOKEN="))
     for chunk in [text[i:i + 1900] for i in range(0, len(text), 1900)]:
@@ -153,26 +199,37 @@ def main():
         prev = json.load(open(STATE))
     except (OSError, ValueError):
         prev = {}
+    prev = {k: (v if isinstance(v, dict) else {"sev": v[:1], "subject": k.split(":", 1)[-1]}) for k, v in prev.items()}
     # New = a problem not seen last run, or one whose severity changed. Wording that drifts (ages, days)
     # must not re-alert every 15 minutes.
-    new = {k: v for k, v in found.items() if k not in prev or prev[k][:1] != v[:1]}
-    cleared = {k: v for k, v in prev.items() if k not in found}
-    checks = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", []))
+    new = [p for k, p in found.items() if k not in prev or prev[k]["sev"] != p["sev"]]
+    cleared = [p for k, p in prev.items() if k not in found]
+    targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", []))
+    stamp = datetime.datetime.fromtimestamp(now, TZ).strftime("%H:%M")
 
     if digest:
-        head = f"🛰️ **Sentinel daily** — {checks} targets watched · " + (
-            "**all clear** ✅" if not found else f"**{len(found)} open problem(s)**")
-        body = "\n".join(f"• {v}" for v in found.values())
-        foot = "\n".join(f"· {i}" for i in info) + \
-               "\n· not watched yet: tenant backups (adolia-odoo, plane, odae, …), Désirs box and MajorMedia hosts"
-        post("\n".join(x for x in (head, body, foot) if x), conf["discord_channel"], dry)
+        day = datetime.datetime.fromtimestamp(now, TZ).strftime("%a %-d %b")
+        head = f"## 🛰️ Sentinel · daily check · {day}"
+        status = f"✅ **All clear** — {targets} targets watched" if not found else \
+                 f"**{len(found)} open** ({counts(found.values())}) · {targets} targets watched"
+        lines = [head, status, ""] + render(found.values()) + ["", "**Servers**"] + [f"▫️ {i}" for i in info] + \
+                ["", "-# Not watched yet: tenant backups (adolia-odoo, plane, odae…), the Désirs box, MajorMedia."]
+        post("\n".join(lines), conf["discord_channel"], dry)
     elif new or cleared:
-        lines = list(new.values()) + [f"✅ resolved — {v.split(' ', 1)[-1]}" for v in cleared.values()]
-        post("🛰️ **Sentinel**\n" + "\n".join(lines), conf["discord_channel"], dry)
+        parts = []
+        if new:
+            parts.append(f"**{len(new)} new** ({counts(new)})")
+        if cleared:
+            parts.append(f"**{len(cleared)} resolved**")
+        lines = [f"🛰️ **Sentinel** · " + " · ".join(parts), ""] + render(new)
+        if cleared:
+            lines += ["", "**Resolved**"] + [f"✅ **{p['subject']}** — back to normal" for p in cleared]
+        lines += ["", f"-# {stamp} · {len(found)} open in total · checks every 15 min"]
+        post("\n".join(lines), conf["discord_channel"], dry)
     elif dry:
-        print(f"no change — {len(found)} open problem(s), {checks} targets")
+        print(f"no change — {len(found)} open, {targets} targets")
     if not dry:
-        json.dump(found, open(STATE, "w"), indent=1)   # only after a successful post, so a failed post retries
+        json.dump(found, open(STATE, "w"), indent=1, ensure_ascii=False)   # after the post, so a failed post retries
 
 
 if __name__ == "__main__":

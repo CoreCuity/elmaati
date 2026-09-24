@@ -6,7 +6,7 @@
 #     | ssh corecuity-HQ 'sudo rm -rf /root/sentinel && sudo tar -C /root -xzf - && sudo bash /root/sentinel/install.sh'
 #
 #   1. check + config → /usr/local/lib/sentinel (root-owned: svc-hermes runs it, cannot change what it watches)
-#   2. svc-hermes user timers: sentinel-check every 15 min, sentinel-digest daily 08:00
+#   2. svc-hermes user timers: sentinel-check every 15 min, sentinel-digest daily 08:00 Africa/Casablanca
 #      (user units, so `fleet-kill contain` stops the watch with the rest of the fleet)
 #   3. dry run as svc-hermes
 set -euo pipefail
@@ -56,9 +56,9 @@ TimeoutStartSec=5min
 EOF
 cat > "${UD}/sentinel-digest.timer" <<'EOF'
 [Unit]
-Description=Sentinel daily digest at 08:00
+Description=Sentinel daily digest at 08:00 Moroccan time
 [Timer]
-OnCalendar=*-*-* 08:00:00
+OnCalendar=*-*-* 08:00:00 Africa/Casablanca
 Persistent=true
 [Install]
 WantedBy=timers.target

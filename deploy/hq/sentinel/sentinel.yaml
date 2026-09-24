@@ -51,4 +51,4 @@ endpoints:
 expiries:
   - name: Adolia Meta access token
     date: 2026-10-08
-    action: regenerate in Meta Business (with catalog_management) and update where it is used
+    action: regenerate it in Meta Business Settings
