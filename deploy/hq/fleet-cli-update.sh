@@ -32,7 +32,7 @@ for f in "$HOME"/.config/environment.d/*.conf; do [ -r "$f" ] && . "$f"; done
 set +a
 export PATH="$PREFIX/bin:/usr/local/bin:/usr/bin:/bin"
 
-log() { echo "[fleet-cli-update] $*"; }
+log() { echo "[fleet-cli-update] $*" >&2; }  # stderr: stdout carries results
 ver() { node -p "require('$PREFIX/lib/node_modules/$1/package.json').version" 2>/dev/null || echo none; }
 envval() { grep -m1 -E "^$1=" "$HENV" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"; }
 
