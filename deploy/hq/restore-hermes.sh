@@ -7,8 +7,8 @@
 #   ssh corecuity-HQ 'sudo bash -s' < core/elmaati/deploy/hq/restore-hermes.sh
 #
 # Idempotent. Does NOT start the gateway (START=1 to start it) and does NOT restore auth.json:
-# the Codex OAuth login is re-done by the operator with a device flow (HERMES-MAC-RELOCATION.md
-# rule: re-authenticate, never copy OAuth tokens between hosts).
+# the Codex OAuth login is re-done by the operator with a device flow (rule: re-authenticate,
+# never copy OAuth tokens between hosts).
 set -euo pipefail
 
 ARCHIVE="${ARCHIVE:-/srv/attic/architect-2026-08-27/home-elmaati.tar.zst}"

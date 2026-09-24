@@ -1,36 +1,31 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Elmaati — the CoreCuity fleet
 
-## Getting Started
+Elmaati is CoreCuity's foreman agent: a Hermes daemon (`svc-hermes`) on
+corecuity-HQ with three workers — Sentinel, Ads, Clerk. The design is
+[`docs/architecture/fleet-v1.md`](../../docs/architecture/fleet-v1.md) in the
+HQ repo; the operating blueprint is [`docs/ELMAATI-OS.md`](docs/ELMAATI-OS.md).
 
-First, run the development server:
+This repo is the source of truth for everything installed on the box. Never
+edit the installed copies: change here → commit → push → run the installer
+named in each file's header.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```text
+agents/        SOUL of each profile (installed root-owned: an agent cannot
+               rewrite its own instructions)
+branding/      avatar
+deploy/hq/     everything that runs on corecuity-HQ
+  restore-hermes.sh          rebuild the Hermes body from the attic backup
+  hermes-fleet-fixes.sh      Phase 0 hygiene (tokens, approvals, nightly restart)
+  hermes-nightly-restart.sh  quiet planned restart (upstream #58817)
+  fleet-profiles.sh          create sentinel / ads / clerk
+  fleet-discord.yaml, discord-permissions.py   Discord HQ layout
+  fleet-audit/               tamper-evident tool-call log + fleet-kill switch
+  fleet-task, fleet-task-install.sh, skills/fleet-task/
+                             the only way the fleet starts a CLI run
+                             (read-only, budgeted, receipts via ai-router task)
+  fleet-cli-update*.sh       weekly self-checking update of the CLI seats
+docs/          blueprint + market research
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The CLI runs themselves go through [`core/ai-router`](../ai-router)
+(`ai-router task`); its HQ runbook is `core/ai-router/docs/HQ-DEPLOY.md`.
