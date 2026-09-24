@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# fleet-task — the fleet's only door to a delegated CLI run (fleet-v1 §3, §6.1–6.2).
+#
+# Installed root-owned at /usr/local/bin/fleet-task by fleet-task-install.sh, so
+# the agent that calls it cannot change its policy. Source of truth = this repo.
+#
+# Policy (enforced here, not in a prompt — design rule #2):
+#   - read-only: v1 has no Builder; code and config changes stay in founder
+#     sessions (phase 4 brings the sandboxed writer)
+#   - target must be an existing client folder under /home/svc-hermes/work
+#     (one folder per client = one MCP registry per client, design rule #6)
+#   - fixed budget: one run at a time, 20 per rolling hour, 15 min queue
+#   - no extra tool grants, no budget flags, no mocks
+# Everything else (fallback, receipts, cooldowns) is `ai-router task`.
+#
+# Usage (as svc-hermes; only --opt=value form):
+#   fleet-task --target=/home/svc-hermes/work/adolia --context-id=<kanban id> \
+#     --requested-by=<founder> --consumer=hermes:<profile> --prompt='…' | --prompt-file=…
+set -euo pipefail
+
+WORK=/home/svc-hermes/work
+MAX_TIMEOUT_MS=1800000
+
+deny() {
+  node -e 'process.stdout.write(JSON.stringify({kind:"task", ok:false, exit_code:4, error:process.argv[1]}, null, 2) + "\n")' "$1"
+  exit 4
+}
+
+[ "$(id -un)" = svc-hermes ] || deny "fleet-task runs as svc-hermes only"
+
+args=()
+target=""
+consumer=""
+for a in "$@"; do
+  case "$a" in
+    --target=*)       target="${a#--target=}" ;;
+    --consumer=*)     consumer="${a#--consumer=}" ;;
+    --timeout-ms=*)
+      t="${a#--timeout-ms=}"
+      [[ "$t" =~ ^[0-9]+$ ]] && [ "$t" -le "$MAX_TIMEOUT_MS" ] || deny "fleet-task: --timeout-ms must be a number ≤ ${MAX_TIMEOUT_MS} (30 min)"
+      ;;
+    --prompt=*|--prompt-file=*|--context-id=*|--requested-by=*|--quality=*|--chain=*|--dry-run|--access=read) ;;
+    --access=*)
+      deny "fleet v1: delegated CLI runs are read-only. Code and config changes stay in founder sessions (Builder is phase 4). Hand the founders a task pack instead."
+      ;;
+    *)
+      deny "fleet-task: option not allowed: ${a%%=*}. Allowed (--opt=value form): --target --prompt --prompt-file --context-id --requested-by --consumer --quality --chain --timeout-ms --dry-run"
+      ;;
+  esac
+  [ "${a%%=*}" = --target ] || args+=("$a")
+done
+
+[ -n "$target" ] || deny "fleet-task: --target=${WORK}/<client> is required"
+real="$(realpath -e -- "$target" 2>/dev/null)" || deny "fleet-task: target does not exist: ${target}"
+case "$real" in
+  "$WORK"/?*) ;;
+  *) deny "fleet-task: target must be a client folder under ${WORK} (got ${real})" ;;
+esac
+
+# Seats and paths from the user's environment.d (the user manager may not have
+# loaded them into this process), then the fixed policy on top.
+set -a
+for f in "$HOME"/.config/environment.d/*.conf; do [ -r "$f" ] && . "$f"; done
+set +a
+export AI_ROUTER_TASK_CONCURRENCY=1
+export AI_ROUTER_TASK_MAX_PER_HOUR=20
+export AI_ROUTER_TASK_QUEUE_TIMEOUT_MS=900000
+
+exec /usr/bin/ai-router task --access=read --target="$real" --consumer="${consumer:-hermes}" "${args[@]}"
