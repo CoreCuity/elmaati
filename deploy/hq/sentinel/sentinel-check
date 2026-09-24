@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""sentinel-check — Sentinel v0, the fleet's read-only watch (fleet-v1 §3). Runs as svc-hermes on a timer.
+
+No model: every check is a fixed threshold from sentinel.yaml. It reads hosts only through the fleet's
+forced-command key (fleet-status JSON), probes public endpoints over HTTPS, and posts to #infra-alerts
+as Elmaati — only when a problem appears, changes or clears. `--digest` posts the daily summary (the
+dead-man signal: no digest by 08:15 means the watch itself is down). `--dry-run` prints instead of posting.
+
+Source of truth: core/elmaati/deploy/hq/sentinel/ (installed root-owned by install.sh).
+"""
+import datetime
+import json
+import os
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+import yaml
+
+CONF = "/usr/local/lib/sentinel/sentinel.yaml"
+STATE = os.path.expanduser("~/.local/state/sentinel/state.json")
+KEY = os.path.expanduser("~/.ssh/fleet_ed25519")
+ENV = os.path.expanduser("~/.hermes/.env")
+UA = "corecuity-sentinel (v0; +https://corecuity.com)"
+
+
+def fleet_status(addr):
+    p = subprocess.run(["ssh", "-T", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-i", KEY,
+                        f"fleetwatch@{addr}"], capture_output=True, text=True, timeout=60)
+    return json.loads(p.stdout)
+
+
+def check_host(name, spec, th, ignore, now):
+    found, info = {}, []
+    try:
+        d = fleet_status(spec["addr"])
+    except Exception as e:
+        found[f"{name}:unreachable"] = f"🔴 **{name}**: fleet-status unreachable ({e.__class__.__name__}) — the watch is blind on this host"
+        return found, info
+    for disk in d["disks"]:
+        pct, mnt = disk["used_pct"], disk["mount"]
+        if pct >= th["disk_crit_pct"]:
+            found[f"{name}:disk:{mnt}"] = f"🔴 **{name}**: disk `{mnt}` {pct}% full (critical ≥ {th['disk_crit_pct']}%)"
+        elif pct >= th["disk_warn_pct"]:
+            found[f"{name}:disk:{mnt}"] = f"🟠 **{name}**: disk `{mnt}` {pct}% full (warning ≥ {th['disk_warn_pct']}%)"
+    m = d["memory_kb"]
+    avail = 100 * m["MemAvailable"] / m["MemTotal"]
+    if avail < th["mem_available_min_pct"]:
+        found[f"{name}:memory"] = f"🟠 **{name}**: only {avail:.0f}% memory available (< {th['mem_available_min_pct']}%)"
+    for unit in d["services"]["failed_system_units"]:
+        if unit not in ignore:
+            found[f"{name}:failed:{unit}"] = f"🔴 **{name}**: service `{unit}` is in failed state"
+    units = {u["unit"]: u for u in d.get("backup_units", [])}
+    for unit in spec.get("backups", []):
+        u = units.get(unit)
+        if not u:
+            found[f"{name}:backup:{unit}"] = f"🔴 **{name}**: backup `{unit}` not found on the host"
+            continue
+        if u["result"] != "success":
+            found[f"{name}:backup:{unit}"] = f"🔴 **{name}**: backup `{unit}` last run failed (result `{u['result']}`, exit {u['exit_status']})"
+            continue
+        fin = u.get("finished") or ""
+        age_h = (now - int(fin.lstrip("@"))) / 3600 if fin.startswith("@") and fin != "@0" else None
+        if age_h is None or age_h > th["backup_max_age_h"]:
+            when = "never" if age_h is None else f"{age_h:.0f} h ago"
+            found[f"{name}:backup:{unit}"] = f"🔴 **{name}**: backup `{unit}` last succeeded {when} (limit {th['backup_max_age_h']} h)"
+    if d["host"]["reboot_required"]:
+        info.append(f"{name}: reboot pending ({len(d['host']['reboot_required_pkgs'])} packages)")
+    info.append(f"{name}: {d['apt']['upgradable']} package updates available")
+    return found, info
+
+
+def check_endpoint(entry, th, now):
+    host, _, path = entry.partition("/")   # "api.example.com/api" checks that path; default is "/"
+    found = {}
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, 443), timeout=10) as s, ctx.wrap_socket(s, server_hostname=host) as t:
+            not_after = ssl.cert_time_to_seconds(t.getpeercert()["notAfter"])
+        days = (not_after - now) / 86400
+        if days < th["tls_crit_days"]:
+            found[f"tls:{host}"] = f"🔴 **{host}**: TLS certificate expires in {days:.1f} days"
+        elif days < th["tls_warn_days"]:
+            found[f"tls:{host}"] = f"🟠 **{host}**: TLS certificate expires in {days:.0f} days"
+    except ssl.SSLCertVerificationError as e:
+        found[f"tls:{host}"] = f"🔴 **{host}**: TLS certificate invalid ({e.verify_message})"
+        return found
+    except Exception as e:
+        found[f"up:{host}"] = f"🔴 **{host}**: unreachable on 443 ({e.__class__.__name__}: {str(e)[:80]})"
+        return found
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+    req = urllib.request.Request(f"https://{host}/{path}", headers={"User-Agent": UA})
+    try:
+        code = urllib.request.build_opener(NoRedirect).open(req, timeout=20).status
+    except urllib.error.HTTPError as e:
+        code = e.code
+    except Exception as e:
+        found[f"up:{host}"] = f"🔴 **{host}**: HTTPS request failed ({e.__class__.__name__}: {str(e)[:80]})"
+        return found
+    if code >= 400 and code not in (401, 403):   # an auth wall still means the service is up
+        found[f"up:{host}"] = f"🔴 **{host}/{path}**: HTTP {code}"
+    return found
+
+
+def check_expiries(items, now):
+    found = {}
+    today = datetime.date.fromtimestamp(now)
+    for it in items:
+        days = (it["date"] - today).days
+        if days < 0:
+            found[f"expiry:{it['name']}"] = f"🔴 **{it['name']}** EXPIRED {-days} days ago — {it['action']}"
+        elif days <= 14:
+            step = next(s for s in (1, 3, 7, 14) if days <= s)   # re-alerts as it crosses 7, 3, 1
+            found[f"expiry:{it['name']}:{step}"] = f"🟠 **{it['name']}** expires in {days} days ({it['date']}) — {it['action']}"
+    return found
+
+
+def post(text, channel, dry):
+    if dry:
+        print("--- would post ---\n" + text)
+        return
+    token = next(l.split("=", 1)[1].strip().strip("\"'") for l in open(ENV) if l.startswith("DISCORD_BOT_TOKEN="))
+    for chunk in [text[i:i + 1900] for i in range(0, len(text), 1900)]:
+        req = urllib.request.Request(f"https://discord.com/api/v10/channels/{channel}/messages", method="POST",
+                                     data=json.dumps({"content": chunk, "allowed_mentions": {"parse": []}}).encode(),
+                                     headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
+                                              "User-Agent": UA})
+        urllib.request.urlopen(req, timeout=20).read()
+
+
+def main():
+    dry, digest = "--dry-run" in sys.argv, "--digest" in sys.argv
+    conf = yaml.safe_load(open(CONF))
+    th, now = conf["thresholds"], time.time()
+    found, info = {}, []
+    for name, spec in conf["hosts"].items():
+        f, i = check_host(name, spec, th, set(conf.get("ignore_failed_units", [])), now)
+        found.update(f)
+        info += i
+    for host in conf["endpoints"]:
+        found.update(check_endpoint(host, th, now))
+    found.update(check_expiries(conf.get("expiries", []), now))
+
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    try:
+        prev = json.load(open(STATE))
+    except (OSError, ValueError):
+        prev = {}
+    # New = a problem not seen last run, or one whose severity changed. Wording that drifts (ages, days)
+    # must not re-alert every 15 minutes.
+    new = {k: v for k, v in found.items() if k not in prev or prev[k][:1] != v[:1]}
+    cleared = {k: v for k, v in prev.items() if k not in found}
+    checks = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", []))
+
+    if digest:
+        head = f"🛰️ **Sentinel daily** — {checks} targets watched · " + (
+            "**all clear** ✅" if not found else f"**{len(found)} open problem(s)**")
+        body = "\n".join(f"• {v}" for v in found.values())
+        foot = "\n".join(f"· {i}" for i in info) + \
+               "\n· not watched yet: tenant backups (adolia-odoo, plane, odae, …), Désirs box and MajorMedia hosts"
+        post("\n".join(x for x in (head, body, foot) if x), conf["discord_channel"], dry)
+    elif new or cleared:
+        lines = list(new.values()) + [f"✅ resolved — {v.split(' ', 1)[-1]}" for v in cleared.values()]
+        post("🛰️ **Sentinel**\n" + "\n".join(lines), conf["discord_channel"], dry)
+    elif dry:
+        print(f"no change — {len(found)} open problem(s), {checks} targets")
+    if not dry:
+        json.dump(found, open(STATE, "w"), indent=1)   # only after a successful post, so a failed post retries
+
+
+if __name__ == "__main__":
+    main()

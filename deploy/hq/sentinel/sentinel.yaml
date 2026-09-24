@@ -1,0 +1,54 @@
+# Sentinel v0 — what the watch checks (docs/architecture/fleet-v1.md §3). Non-LLM: every verdict here is
+# a deterministic threshold. Installed root-owned; svc-hermes can read it but not change what it watches.
+
+discord_channel: "1505316048809885807"   # #infra-alerts (see ../fleet-discord.yaml)
+
+# Hosts read through the fleet's forced-command key: ssh fleetwatch@<addr> → fleet-status JSON only.
+hosts:
+  corecuity-HQ:
+    addr: 127.0.0.1
+    backups: [hq-offsite-hetzner.service]
+  corecuity-clients:
+    addr: 161.97.166.112
+    backups: [mailcow-backup.service, mailcow-offsite-hetzner.service]
+    # Tenant backups (adolia-odoo, plane, odae, …) run as rootless user units that fleetwatch cannot see.
+    # Not watched yet — listed in the daily digest as a known gap.
+
+thresholds:
+  disk_warn_pct: 85
+  disk_crit_pct: 95
+  mem_available_min_pct: 10
+  backup_max_age_h: 26
+  tls_warn_days: 14
+  tls_crit_days: 5
+
+# Failed units that are known and harmless on these VPS images (boot-time only).
+ignore_failed_units: [systemd-networkd-wait-online.service, cloud-init.service]
+
+# Public endpoints, checked from HQ: HTTPS answers (< 400, redirects and auth walls count as up) + certificate
+# expiry. `host/path` checks that path (APIs whose root is a 404 by design).
+endpoints:
+  - plane.corecuity.com
+  - mail.corecuity.com
+  - status.corecuity.com
+  - monitor.corecuity.com
+  - odae.ma
+  - www.odae.ma
+  - adolia.ma
+  - adolia.odoobooking.online
+  - desirsdorient.com
+  - admin.desirsdorient.com
+  - paradisante.ma
+  - ajihost.ma
+  - api.ajihost.ma/api
+  - youandco.online              # 2026-09-24: resolves to 198.54.117.242 — not a CoreCuity server
+  # rec / rcpt-*: DNS still points at the dead server-architect (84.247.138.95); Caddy serves them on HQ.
+  - rcpt-hq.corecuity.com
+  - rcpt-desirs.corecuity.com
+  - rec.corecuity.com
+
+# Credentials with a known expiry. Alert at 14, 7, 3 and 1 days out, and after expiry.
+expiries:
+  - name: Adolia Meta access token
+    date: 2026-10-08
+    action: regenerate in Meta Business (with catalog_management) and update where it is used
