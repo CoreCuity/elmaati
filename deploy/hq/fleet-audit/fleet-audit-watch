@@ -7,7 +7,8 @@ this root-owned check runs every 10 minutes and alerts the Discord home channel 
   2. an installed plugin copy differs from the root-held reference, or has vanished,
   3. a Hermes home no longer has fleet-audit in plugins.enabled (or has it in plugins.disabled),
   4. a Hermes process that has been up >2 min never announced itself (no audit.loaded from its PID),
-  5. anyone other than svc-hermes wrote into the log.
+  5. anyone other than svc-hermes wrote into the log,
+  6. Sentinel (the fleet's infra watch) has not completed a run in 35 minutes — the watcher of the watcher.
 A kill-switch marker (/var/lib/fleet-audit/KILLED) pauses the checks. Same alert repeats at most every 6 h.
 
 Source of truth: core/elmaati/deploy/hq/fleet-audit/ (installed by install.sh). --dry-run prints instead
@@ -30,6 +31,8 @@ HH = f"/home/{USER}/.hermes"
 REF = "/usr/local/lib/fleet-audit/plugin/fleet-audit"
 LOG_DIR = "/var/lib/fleet-audit"
 STATE = "/var/lib/fleet-audit-watch/state.json"
+SENTINEL_STATE = f"/home/{USER}/.local/state/sentinel/state.json"   # rewritten by every Sentinel run
+SENTINEL_MAX_AGE_S = 35 * 60
 REPEAT_S = 6 * 3600
 
 
@@ -110,6 +113,13 @@ def problems():
     for pid, args in hermes_processes():
         if pid not in pids:
             found.append(f"Hermes process {pid} is running without the tool-call log ({args[:80]})")
+    try:
+        age = time.time() - os.path.getmtime(SENTINEL_STATE)
+        if age > SENTINEL_MAX_AGE_S:
+            # Fixed wording (no minute count) so the 6-hour repeat limit holds.
+            found.append("Sentinel has not completed a run in over 35 min — the infra watch is down")
+    except OSError:
+        found.append("Sentinel has no state file — the infra watch has never run")
     if foreign:
         found.append(f"{len(foreign)} log entries were written by another user, e.g. {foreign[0]}")
     return found
@@ -141,7 +151,7 @@ def main():
     if not found:
         print("ok")
         return 0
-    text = "🚨 **Tool-call log problem on corecuity-HQ** — the fleet may be acting unlogged.\n" + \
+    text = "🚨 **Fleet watch problem on corecuity-HQ** — the tool-call log or the infra watch is not doing its job.\n" + \
            "\n".join(f"• {p}" for p in found) + \
            "\nCheck: `sudo fleet-audit-watch --dry-run` · stop the fleet: `sudo fleet-kill contain \"<reason>\"`"
     print(text)

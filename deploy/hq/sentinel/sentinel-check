@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 import zoneinfo
+from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 
@@ -86,6 +87,13 @@ def check_host(name, spec, th, ignore, now):
             continue
         if u["result"] != "success":
             found[f"{name}:backup:{unit}"] = problem(CRIT, "backup", label, f"last run failed on {name} (exit {u['exit_status']})")
+            continue
+        if u.get("active") in ("activating", "active", "reloading"):
+            # Running right now: systemd has reset the exit time to 0, so judge by how long it has run.
+            st = u.get("started") or ""
+            run_h = (now - int(st.lstrip("@"))) / 3600 if st.startswith("@") and st != "@0" else 0
+            if run_h > th["backup_max_run_h"]:
+                found[f"{name}:backup:{unit}"] = problem(WARN, "backup", label, f"still running after {run_h:.0f} h on {name}")
             continue
         fin = u.get("finished") or ""
         age_h = (now - int(fin.lstrip("@"))) / 3600 if fin.startswith("@") and fin != "@0" else None
@@ -186,12 +194,16 @@ def main():
     conf = yaml.safe_load(open(CONF))
     th, now = conf["thresholds"], time.time()
     found, info = {}, []
-    for name, spec in conf["hosts"].items():
-        f, i = check_host(name, spec, th, set(conf.get("ignore_failed_units", [])), now)
-        found.update(f)
-        info += i
-    for host in conf["endpoints"]:
-        found.update(check_endpoint(host, th, now))
+    ignore = set(conf.get("ignore_failed_units", []))
+    with ThreadPoolExecutor(max_workers=12) as pool:   # dead hosts wait out timeouts in parallel, not in series
+        hosts = [pool.submit(check_host, n, spec, th, ignore, now) for n, spec in conf["hosts"].items()]
+        sites = [pool.submit(check_endpoint, e, th, now) for e in conf["endpoints"]]
+        for fut in hosts:
+            f, i = fut.result()
+            found.update(f)
+            info += i
+        for fut in sites:
+            found.update(fut.result())
     found.update(check_expiries(conf.get("expiries", []), now))
 
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
@@ -221,7 +233,9 @@ def main():
             parts.append(f"**{len(new)} new** ({counts(new)})")
         if cleared:
             parts.append(f"**{len(cleared)} resolved**")
-        lines = [f"🛰️ **Sentinel** · " + " · ".join(parts), ""] + render(new)
+        lines = [f"🛰️ **Sentinel** · " + " · ".join(parts)]
+        if new:
+            lines += [""] + render(new)
         if cleared:
             lines += ["", "**Resolved**"] + [f"✅ **{p['subject']}** — back to normal" for p in cleared]
         lines += ["", f"-# {stamp} · {len(found)} open in total · checks every 15 min"]

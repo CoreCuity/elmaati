@@ -19,6 +19,7 @@ thresholds:
   disk_crit_pct: 95
   mem_available_min_pct: 10
   backup_max_age_h: 26
+  backup_max_run_h: 4       # a backup still running after this long is stuck
   tls_warn_days: 14
   tls_crit_days: 5
 
@@ -31,9 +32,11 @@ endpoints:
   - plane.corecuity.com
   - mail.corecuity.com
   - status.corecuity.com
+  - mta-sts.corecuity.com/.well-known/mta-sts.txt   # mail MTA-STS policy (root is a 404 by design)
   - monitor.corecuity.com
   - odae.ma
   - www.odae.ma
+  - wp.odae.ma
   - adolia.ma
   - adolia.odoobooking.online
   - desirsdorient.com
