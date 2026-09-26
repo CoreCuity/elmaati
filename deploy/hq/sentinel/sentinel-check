@@ -79,6 +79,9 @@ def check_host(name, spec, th, ignore, now):
         if unit not in ignore:
             found[f"{name}:failed:{unit}"] = problem(CRIT, "host", name, f"service `{unit}` has failed")
     units = {u["unit"]: u for u in d.get("backup_units", [])}
+    # Off-site copies are chained after the local backup, so while any backup on this host is running,
+    # the others may be queued behind it: their age says nothing until the chain finishes.
+    chain_running = any(u.get("active") in ("activating", "active", "reloading") for u in units.values())
     for unit in spec.get("backups", []):
         label = unit.removesuffix(".service")
         u = units.get(unit)
@@ -94,6 +97,8 @@ def check_host(name, spec, th, ignore, now):
             run_h = (now - int(st.lstrip("@"))) / 3600 if st.startswith("@") and st != "@0" else 0
             if run_h > th["backup_max_run_h"]:
                 found[f"{name}:backup:{unit}"] = problem(WARN, "backup", label, f"still running after {run_h:.0f} h on {name}")
+            continue
+        if chain_running:
             continue
         fin = u.get("finished") or ""
         age_h = (now - int(fin.lstrip("@"))) / 3600 if fin.startswith("@") and fin != "@0" else None

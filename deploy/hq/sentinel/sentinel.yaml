@@ -18,8 +18,11 @@ thresholds:
   disk_warn_pct: 85
   disk_crit_pct: 95
   mem_available_min_pct: 10
-  backup_max_age_h: 26
+  # Backups run nightly. Their last success may be up to 24 h (interval) + 4 h (longest allowed run)
+  # + 2 h (slack for a late start) old before it is a problem. A backup queued behind another one on
+  # the same host is not judged by age at all while the chain is running (see sentinel-check).
   backup_max_run_h: 4       # a backup still running after this long is stuck
+  backup_max_age_h: 30
   tls_warn_days: 14
   tls_crit_days: 5
 
