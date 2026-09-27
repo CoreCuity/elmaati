@@ -54,7 +54,8 @@ endpoints:
   - rec.corecuity.com
 
 # Credentials with a known expiry. Alert at 14, 7, 3 and 1 days out, and after expiry.
-expiries:
-  - name: Adolia Meta access token
-    date: 2026-10-08
-    action: regenerate it in Meta Business Settings
+# Only dates that were verified at the source belong here. The Adolia Meta token is NOT listed: debug_token
+# (2026-09-24) shows expires_at = 0, so it has no hard expiry. Its data_access_expires_at is a rolling 90-day
+# window that renews with use, not a deadline. It dies on a password change or revocation instead, and the
+# fleet holds no Meta credential to probe that (fleet-v1 §6.3).
+expiries: []
