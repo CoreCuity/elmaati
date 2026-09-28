@@ -16,11 +16,13 @@ hosts:
     # exist and have succeeded within the age limit; lingering users NOT listed show in the digest.
     tenant_backups:
       adolia: [adolia-backup.service, adolia-odoo-offsite-hetzner.service]
-      ajihost: [ajihost-backup.service]              # local only — no off-site copy yet
+      ajihost: [ajihost-backup.service]
       odae: [odae-backup.service, odae-offsite-hetzner.service]
-      paradisante: [paradisante-backup.service]      # local only — no off-site copy yet
+      paradisante: [paradisante-backup.service]
       plane: [plane-backup.service, plane-offsite-hetzner.service]
-      # youandco: no backup unit exists (2026-09-28) — open question whether You&Co is still a client
+    # Intentional gaps (Najlaa, 2026-09-28) — kept out of the digest; any OTHER gap still shows there.
+    local_only_by_plan: [ajihost, paradisante]   # their plan has no off-site copy
+    not_watched: [youandco]                      # client on hold, no interaction — no backup, no site/domain watch
 
 thresholds:
   disk_warn_pct: 85
@@ -57,7 +59,6 @@ endpoints:
   - paradisante.ma
   - ajihost.ma
   - api.ajihost.ma/api
-  - youandco.online              # 2026-09-24: resolves to 198.54.117.242 — not a CoreCuity server
   # rec / rcpt-*: DNS still points at the dead server-architect (84.247.138.95); Caddy serves them on HQ.
   - rcpt-hq.corecuity.com
   - rcpt-desirs.corecuity.com
@@ -88,7 +89,6 @@ domains:
   - paradisante.ma
   - ajihost.ma
   - odoobooking.online     # hosts adolia.odoobooking.online — expires 2026-12-12 (checked 2026-09-28)
-  - youandco.online        # not our server any more; kept until "is You&Co still a client?" is answered
 
 # Credentials with a known expiry. Alert at 14, 7, 3 and 1 days out, and after expiry.
 # Only dates verified at the source (debug_token etc.) belong here.

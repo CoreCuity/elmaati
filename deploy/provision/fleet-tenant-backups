@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""fleet-tenant-backups — last run of every tenant (rootless, per-user) backup unit, as JSON.
+
+Tenant backups run as systemd USER units under each client's own Linux user, which the fleet's
+read-only `fleetwatch` account cannot see. This helper runs as root and reports facts only: unit name,
+result, exit status, start/finish time, active state. It takes no input and runs only fixed,
+read-only `systemctl show` queries.
+
+fleetwatch may run it through exactly one sudo rule, with no arguments allowed:
+
+    fleetwatch ALL=(root) NOPASSWD: /usr/local/sbin/fleet-tenant-backups ""
+
+`fleet-status` calls it and adds the result as `tenant_backup_units`.
+Source of truth: elmaati repo, deploy/provision/ (core/elmaati/deploy/provision/ on the Mac). Never edit on a server.
+"""
+import json
+import os
+import subprocess
+
+LINGER = "/var/lib/systemd/linger"
+PROPS = "Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,ActiveState"
+
+
+def run(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+    except Exception:
+        return ""
+
+
+def main():
+    out = []
+    users = sorted(os.listdir(LINGER)) if os.path.isdir(LINGER) else []
+    for user in users:
+        machine = ["systemctl", "--user", "-M", f"{user}@", "--no-pager"]
+        listing = run(machine + ["list-units", "--type=service", "--all", "--no-legend", "--plain"])
+        for line in listing.splitlines():
+            unit = line.split()[0] if line.split() else ""
+            if not any(k in unit for k in ("backup", "offsite", "restic")):
+                continue
+            props = dict(l.split("=", 1) for l in run(machine + ["show", unit, "--timestamp=unix", "-p", PROPS]).splitlines()
+                         if "=" in l)
+            out.append({"user": user, "unit": unit, "result": props.get("Result"),
+                        "exit_status": props.get("ExecMainStatus"),
+                        "started": props.get("ExecMainStartTimestamp") or None,
+                        "finished": props.get("ExecMainExitTimestamp") or None,
+                        "active": props.get("ActiveState")})
+    print(json.dumps({"lingering_users": users, "units": out}))
+
+
+if __name__ == "__main__":
+    main()

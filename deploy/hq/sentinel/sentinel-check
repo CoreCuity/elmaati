@@ -92,9 +92,10 @@ def check_host(name, spec, th, ignore, now):
             for user, expected in spec["tenant_backups"].items():
                 mine = {u["unit"]: u for u in tenant["units"] if u["user"] == user}
                 found.update(judge_backups(name, f"{name}/{user}", mine, expected, th, now))
-            watched = set(spec["tenant_backups"])
+            watched = set(spec["tenant_backups"]) | set(spec.get("not_watched", []))
             unwatched = [u for u in tenant.get("lingering_users", []) if u not in watched]
-            local_only = [u for u, exp in spec["tenant_backups"].items() if not any("offsite" in x for x in exp)]
+            local_only = [u for u, exp in spec["tenant_backups"].items()
+                          if not any("offsite" in x for x in exp) and u not in spec.get("local_only_by_plan", [])]
             if local_only:
                 info.append(f"**{name}** — backed up locally only (no off-site copy): {', '.join(local_only)}")
             if unwatched:
@@ -392,7 +393,10 @@ def main():
     # New = a problem not seen last run, or one whose severity changed. Wording that drifts (ages, days)
     # must not re-alert every 15 minutes.
     new = [p for k, p in found.items() if k not in prev or prev[k]["sev"] != p["sev"]]
-    cleared = [p for k, p in prev.items() if k not in found]
+    # A cleared key whose target was taken out of the config was not fixed — say so instead of "back to normal".
+    names = set(conf["hosts"]) | {e.partition("/")[0] for e in conf["endpoints"]} | set(conf.get("domains", [])) | \
+        {sh["name"] for sh in conf.get("shops", [])} | set(conf.get("content") or {}) | {x["name"] for x in conf.get("expiries", [])}
+    cleared = [{**p, "_watched": any(n in k for n in names)} for k, p in prev.items() if k not in found]
     targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", [])) + len(conf.get("domains", [])) + \
         len(conf.get("shops", [])) + len(conf.get("content") or {}) + \
         sum(len(u) for spec in conf["hosts"].values() for u in (spec.get("tenant_backups") or {}).values())
@@ -416,7 +420,9 @@ def main():
         if new:
             lines += [""] + render(new)
         if cleared:
-            lines += ["", "**Resolved**"] + [f"✅ **{p['subject']}** — back to normal" for p in cleared]
+            lines += ["", "**Resolved**"] + [f"✅ **{p['subject']}** — back to normal" if p["_watched"]
+                                             else f"➖ **{p['subject']}** — no longer watched (removed from the config)"
+                                             for p in cleared]
         lines += ["", f"-# {stamp} · {len(found)} open in total · checks every 15 min"]
         post("\n".join(lines), conf["discord_channel"], dry)
     elif dry:

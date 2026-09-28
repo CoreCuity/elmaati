@@ -2,7 +2,7 @@
 # restore-hermes.sh — bring Elmaati's Hermes body back on corecuity-HQ as svc-hermes,
 # restored from the server-architect insurance archive (2026-08-27).
 #
-# Prereq: core/infra/provision/new-agent.sh has created svc-hermes.
+# Prereq: core/elmaati/deploy/provision/new-agent.sh has created svc-hermes.
 # Run from the Mac (source of truth = this repo; never edit on the server):
 #   ssh corecuity-HQ 'sudo bash -s' < core/elmaati/deploy/hq/restore-hermes.sh
 #

@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""fleet-status — the ONLY command the fleet's SSH key may run on a host.
+
+Installed at /usr/local/bin/fleet-status and pinned as a forced command in the fleet's
+authorized_keys entry, so a stolen fleet key yields facts, never a shell:
+
+    restrict,command="/usr/local/bin/fleet-status" ssh-ed25519 AAAA... fleet@corecuity
+
+Read-only by construction: it shells out only to fixed, argument-free status commands and
+prints JSON. It takes no input and ignores SSH_ORIGINAL_COMMAND.
+
+Source of truth: elmaati repo, deploy/provision/fleet-status. Never edit on a server.
+"""
+import glob
+import json
+import os
+import shutil
+import socket
+import subprocess
+import time
+
+def run(cmd, timeout=15):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.stdout.strip()
+    except Exception as e:
+        return f"ERROR: {e.__class__.__name__}"
+
+def host():
+    return {
+        "hostname": socket.gethostname(),
+        "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "uptime_seconds": int(float(open("/proc/uptime").read().split()[0])),
+        "load": os.getloadavg(),
+        "reboot_required": os.path.exists("/var/run/reboot-required"),
+        "reboot_required_pkgs": (open("/var/run/reboot-required.pkgs").read().split()
+                                 if os.path.exists("/var/run/reboot-required.pkgs") else []),
+    }
+
+def disks():
+    out = []
+    for line in run(["df", "-P", "-x", "tmpfs", "-x", "devtmpfs", "-x", "overlay"]).splitlines()[1:]:
+        f = line.split()
+        if len(f) >= 6:
+            out.append({"fs": f[0], "size_kb": int(f[1]), "used_pct": int(f[4].rstrip("%")), "mount": f[5]})
+    return out
+
+def memory():
+    m = {}
+    for line in open("/proc/meminfo"):
+        k, v = line.split(":", 1)
+        if k in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
+            m[k] = int(v.strip().split()[0])
+    return m
+
+def services():
+    failed = run(["systemctl", "list-units", "--state=failed", "--no-legend", "--plain", "--no-pager"])
+    units = [l.split()[0] for l in failed.splitlines() if l.strip()]
+    return {"failed_system_units": units}
+
+def backup_units():
+    """Last run of every system backup/off-site service: result, exit status, when it finished.
+    `systemctl show` is readable unprivileged. Tenant (rootless) user units are not visible here."""
+    names = run(["systemctl", "list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager"])
+    out = []
+    for line in names.splitlines():
+        unit = line.split()[0] if line.split() else ""
+        if not any(k in unit for k in ("backup", "offsite", "restic")):
+            continue
+        props = dict(l.split("=", 1) for l in run(["systemctl", "show", unit, "--no-pager", "--timestamp=unix", "-p",
+                     "Result,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp,ActiveState"]).splitlines() if "=" in l)
+        out.append({"unit": unit, "result": props.get("Result"), "exit_status": props.get("ExecMainStatus"),
+                    "started": props.get("ExecMainStartTimestamp") or None,
+                    "finished": props.get("ExecMainExitTimestamp") or None, "active": props.get("ActiveState")})
+    return out
+
+TENANT_HELPER = "/usr/local/sbin/fleet-tenant-backups"
+
+
+def tenant_backup_units():
+    """Tenant (rootless) backup units, via the one sudo rule fleetwatch has: the root helper
+    fleet-tenant-backups, run with no arguments. None when the helper isn't installed on this host."""
+    if not os.path.exists(TENANT_HELPER):
+        return None
+    raw = run(["sudo", "-n", TENANT_HELPER], timeout=60)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {"error": raw[:200]}
+
+
+AUDIT_UNITS = ["fleet-audit-collector.service", "fleet-audit-watch.service", "fleet-audit-watch.timer"]
+
+
+def fleet_audit():
+    """State of the fleet's tool-call log (collector + its watcher). `systemctl show` is readable
+    unprivileged; the log itself stays root-only. None on hosts without it."""
+    out = {}
+    for unit in AUDIT_UNITS:
+        props = dict(l.split("=", 1) for l in run(["systemctl", "show", unit, "--no-pager", "--timestamp=unix", "-p",
+                     "LoadState,ActiveState,SubState,Result,ExecMainExitTimestamp,LastTriggerUSec"]).splitlines() if "=" in l)
+        if props.get("LoadState") == "loaded":
+            out[unit] = {"active": props.get("ActiveState"), "sub": props.get("SubState"), "result": props.get("Result"),
+                         "finished": props.get("ExecMainExitTimestamp") or None, "last_trigger": props.get("LastTriggerUSec") or None}
+    return out or None
+
+
+def timers():
+    rows = []
+    for line in run(["systemctl", "list-timers", "--all", "--no-legend", "--no-pager"]).splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            rows.append(line.strip()[:160])
+    return rows[:25]
+
+def certs():
+    out = []
+    for path in glob.glob("/var/lib/caddy/.local/share/caddy/certificates/*/*/*.crt"):
+        end = run(["openssl", "x509", "-enddate", "-noout", "-in", path])
+        out.append({"cert": os.path.basename(path), "not_after": end.replace("notAfter=", "")})
+    return out
+
+def listening():
+    rows = []
+    for line in run(["ss", "-tulnH"]).splitlines():
+        f = line.split()
+        if len(f) >= 5:
+            rows.append(f"{f[0]} {f[4]}")
+    return sorted(set(rows))
+
+def apt():
+    return {"upgradable": max(0, len(run(["apt", "list", "--upgradable"]).splitlines()) - 1)}
+
+def main():
+    print(json.dumps({
+        "schema": "fleet-status/4",
+        "host": host(),
+        "disks": disks(),
+        "memory_kb": memory(),
+        "services": services(),
+        "backup_units": backup_units(),
+        "tenant_backups": tenant_backup_units(),
+        "fleet_audit": fleet_audit(),
+        "timers": timers(),
+        "certificates": certs(),
+        "listening": listening(),
+        "apt": apt(),
+    }, indent=1, default=str))
+
+if __name__ == "__main__":
+    main()
