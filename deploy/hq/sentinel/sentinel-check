@@ -79,32 +79,24 @@ def check_host(name, spec, th, ignore, now):
         if unit not in ignore:
             found[f"{name}:failed:{unit}"] = problem(CRIT, "host", name, f"service `{unit}` has failed")
     units = {u["unit"]: u for u in d.get("backup_units", [])}
-    # Off-site copies are chained after the local backup, so while any backup on this host is running,
-    # the others may be queued behind it: their age says nothing until the chain finishes.
-    chain_running = any(u.get("active") in ("activating", "active", "reloading") for u in units.values())
-    for unit in spec.get("backups", []):
-        label = unit.removesuffix(".service")
-        u = units.get(unit)
-        if not u:
-            found[f"{name}:backup:{unit}"] = problem(CRIT, "backup", label, f"not found on {name}")
-            continue
-        if u["result"] != "success":
-            found[f"{name}:backup:{unit}"] = problem(CRIT, "backup", label, f"last run failed on {name} (exit {u['exit_status']})")
-            continue
-        if u.get("active") in ("activating", "active", "reloading"):
-            # Running right now: systemd has reset the exit time to 0, so judge by how long it has run.
-            st = u.get("started") or ""
-            run_h = (now - int(st.lstrip("@"))) / 3600 if st.startswith("@") and st != "@0" else 0
-            if run_h > th["backup_max_run_h"]:
-                found[f"{name}:backup:{unit}"] = problem(WARN, "backup", label, f"still running after {run_h:.0f} h on {name}")
-            continue
-        if chain_running:
-            continue
-        fin = u.get("finished") or ""
-        age_h = (now - int(fin.lstrip("@"))) / 3600 if fin.startswith("@") and fin != "@0" else None
-        if age_h is None or age_h > th["backup_max_age_h"]:
-            when = "has never run" if age_h is None else f"last succeeded {age_h:.0f} h ago"
-            found[f"{name}:backup:{unit}"] = problem(CRIT, "backup", label, f"{when} on {name} (limit {th['backup_max_age_h']} h)")
+    found.update(judge_backups(name, name, units, spec.get("backups", []), th, now))
+    tenant = d.get("tenant_backups")
+    if spec.get("tenant_backups"):
+        if not isinstance(tenant, dict) or "units" not in tenant:
+            why_not = "the tenant-backup helper isn't installed" if tenant is None else tenant.get("error", "bad data")
+            found[f"{name}:tenant-backups"] = problem(CRIT, "backup", f"client backups on {name}",
+                                                      f"can't be read ({why_not}) — the watch is blind to them")
+        else:
+            for user, expected in spec["tenant_backups"].items():
+                mine = {u["unit"]: u for u in tenant["units"] if u["user"] == user}
+                found.update(judge_backups(name, f"{name}/{user}", mine, expected, th, now))
+            watched = set(spec["tenant_backups"])
+            unwatched = [u for u in tenant.get("lingering_users", []) if u not in watched]
+            local_only = [u for u, exp in spec["tenant_backups"].items() if not any("offsite" in x for x in exp)]
+            if local_only:
+                info.append(f"**{name}** — backed up locally only (no off-site copy): {', '.join(local_only)}")
+            if unwatched:
+                info.append(f"**{name}** — tenants with no backup watched: {', '.join(unwatched)}")
     parts = []
     if d["host"]["reboot_required"]:
         parts.append("reboot pending")
@@ -112,6 +104,39 @@ def check_host(name, spec, th, ignore, now):
         parts.append(f"{d['apt']['upgradable']} updates waiting")
     info.append(f"**{name}** — " + (" · ".join(parts) if parts else "up to date"))
     return found, info
+
+
+def judge_backups(host, scope, units, expected, th, now):
+    """Judge the expected backup units of one scope (a host's system units, or one tenant's user units).
+    Off-site copies are chained after the local backup, so while any backup in the scope is running,
+    the others may be queued behind it: their age says nothing until the chain finishes."""
+    found = {}
+    chain_running = any(u.get("active") in ("activating", "active", "reloading") for u in units.values())
+    for unit in expected:
+        label = unit.removesuffix(".service")
+        key = f"{scope}:backup:{unit}"
+        u = units.get(unit)
+        if not u:
+            found[key] = problem(CRIT, "backup", label, f"not found on {host}")
+            continue
+        if u["result"] != "success":
+            found[key] = problem(CRIT, "backup", label, f"last run failed on {host} (exit {u['exit_status']})")
+            continue
+        if u.get("active") in ("activating", "active", "reloading"):
+            # Running right now: systemd has reset the exit time to 0, so judge by how long it has run.
+            st = u.get("started") or ""
+            run_h = (now - int(st.lstrip("@"))) / 3600 if st.startswith("@") and st != "@0" else 0
+            if run_h > th["backup_max_run_h"]:
+                found[key] = problem(WARN, "backup", label, f"still running after {run_h:.0f} h on {host}")
+            continue
+        if chain_running:
+            continue
+        fin = u.get("finished") or ""
+        age_h = (now - int(fin.lstrip("@"))) / 3600 if fin.startswith("@") and fin != "@0" else None
+        if age_h is None or age_h > th["backup_max_age_h"]:
+            when = "has never run" if age_h is None else f"last succeeded {age_h:.0f} h ago"
+            found[key] = problem(CRIT, "backup", label, f"{when} on {host} (limit {th['backup_max_age_h']} h)")
+    return found
 
 
 def check_endpoint(entry, th, now):
@@ -221,7 +246,8 @@ def main():
     # must not re-alert every 15 minutes.
     new = [p for k, p in found.items() if k not in prev or prev[k]["sev"] != p["sev"]]
     cleared = [p for k, p in prev.items() if k not in found]
-    targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", []))
+    targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", [])) + \
+        sum(len(u) for spec in conf["hosts"].values() for u in (spec.get("tenant_backups") or {}).values())
     stamp = datetime.datetime.fromtimestamp(now, TZ).strftime("%H:%M")
 
     if digest:
@@ -230,7 +256,7 @@ def main():
         status = f"✅ **All clear** — {targets} targets watched" if not found else \
                  f"**{len(found)} open** ({counts(found.values())}) · {targets} targets watched"
         lines = [head, status, ""] + render(found.values()) + ["", "**Servers**"] + [f"▫️ {i}" for i in info] + \
-                ["", "-# Not watched yet: tenant backups (adolia-odoo, plane, odae…), the Désirs box, MajorMedia."]
+                ["", "-# Not watched yet: the Désirs box, MajorMedia."]
         post("\n".join(lines), conf["discord_channel"], dry)
     elif new or cleared:
         parts = []

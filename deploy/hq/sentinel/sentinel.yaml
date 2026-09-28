@@ -11,8 +11,16 @@ hosts:
   corecuity-clients:
     addr: 161.97.166.112
     backups: [mailcow-backup.service, mailcow-offsite-hetzner.service]
-    # Tenant backups (adolia-odoo, plane, odae, …) run as rootless user units that fleetwatch cannot see.
-    # Not watched yet — listed in the daily digest as a known gap.
+    # Client (tenant) backups run as each client's own systemd user units. fleet-status reads them through
+    # the root helper fleet-tenant-backups (one fixed sudo rule, no arguments). Every unit listed here must
+    # exist and have succeeded within the age limit; lingering users NOT listed show in the digest.
+    tenant_backups:
+      adolia: [adolia-backup.service, adolia-odoo-offsite-hetzner.service]
+      ajihost: [ajihost-backup.service]              # local only — no off-site copy yet
+      odae: [odae-backup.service, odae-offsite-hetzner.service]
+      paradisante: [paradisante-backup.service]      # local only — no off-site copy yet
+      plane: [plane-backup.service, plane-offsite-hetzner.service]
+      # youandco: no backup unit exists (2026-09-28) — open question whether You&Co is still a client
 
 thresholds:
   disk_warn_pct: 85
