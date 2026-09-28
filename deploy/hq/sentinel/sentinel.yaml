@@ -63,6 +63,22 @@ endpoints:
   - rcpt-desirs.corecuity.com
   - rec.corecuity.com
 
+# Storefronts, end to end (every run): the WooCommerce Store API lists products, a live product page shows
+# the price the API reports, and the cart backend answers. product_url: the storefront's page for a slug
+# (omit to use WooCommerce's own permalink).
+shops:
+  - name: odae.ma
+    api: https://wp.odae.ma
+    product_url: https://odae.ma/fr/store/{slug}     # headless storefront, fed by wp.odae.ma
+  - name: adolia.ma
+    api: https://adolia.ma
+
+# Sites without a shop: the landing page must contain this text and no error/maintenance page.
+content:
+  desirsdorient.com: "Desirs d"
+  paradisante.ma: "Paradisante"
+  ajihost.ma: "Ajihost"
+
 # Domain registrations, looked up once a day (RDAP; port-43 WHOIS for .ma).
 domains:
   - corecuity.com

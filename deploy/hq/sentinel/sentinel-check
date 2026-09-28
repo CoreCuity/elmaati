@@ -34,7 +34,7 @@ TZ = zoneinfo.ZoneInfo("Africa/Casablanca")   # founders read times in Moroccan 
 
 CRIT, WARN = "🔴", "🟠"
 # Order and headings of the groups in a message.
-GROUPS = [("down", "Sites down"), ("tls", "Certificates"), ("backup", "Backups"),
+GROUPS = [("down", "Sites down"), ("shop", "Storefronts"), ("tls", "Certificates"), ("backup", "Backups"),
           ("host", "Servers"), ("domain", "Domains"), ("expiry", "Expiring credentials")]
 
 
@@ -234,6 +234,75 @@ def check_domains(domains, th, now):
     return found
 
 
+BROKEN = ["error establishing a database connection", "there has been a critical error", "fatal error",
+          "briefly unavailable for scheduled maintenance", "mode maintenance", "site en maintenance"]
+
+
+def fetch(url, limit=2_000_000):
+    """(status, final_url, text) — follows redirects, like a visitor's browser."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return r.status, r.geturl(), r.read(limit).decode(errors="ignore")
+    except urllib.error.HTTPError as e:
+        return e.code, url, ""
+
+
+def visible(html):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", html)))
+
+
+def check_content(host, marker):
+    """The page a visitor lands on shows the site's real content, not an error or maintenance page."""
+    try:
+        code, final, html = fetch(f"https://{host}/")
+    except Exception as e:
+        return {}   # reachability is check_endpoint's job
+    text = visible(html).lower()
+    bad = next((b for b in BROKEN if b in text), None)
+    if code < 400 and bad:
+        return {f"shop:{host}:content": problem(CRIT, "shop", host, f"shows an error page (\"{bad}\")")}
+    if code < 400 and marker.lower() not in html.lower():
+        return {f"shop:{host}:content": problem(WARN, "shop", host, f"page loads but its usual content is missing (no \"{marker}\")")}
+    return {}
+
+
+def check_shop(spec):
+    """A WooCommerce shop end to end: the Store API lists products, a live product page shows the price the
+    API reports (catches a broken API link, a blank render or a stale cache), and the cart backend answers."""
+    name, api = spec["name"], spec["api"].rstrip("/")
+    found = {}
+    try:
+        code, _, body = fetch(f"{api}/wp-json/wc/store/v1/products?per_page=10&stock_status=instock")
+        products = json.loads(body) if code == 200 else None
+    except Exception as e:
+        code, products = why(e), None
+    if not products:
+        return {f"shop:{name}:api": problem(CRIT, "shop", name, f"the shop API lists no products (HTTP {code}) — the catalogue or the API is down")}
+    p = next((p for p in products if int(p["prices"]["price"] or 0) > 0), None)
+    if p:
+        minor = int(p["prices"].get("currency_minor_unit", 2))
+        amount = int(p["prices"]["price"]) // (10 ** minor)
+        url = spec["product_url"].format(slug=p["slug"]) if spec.get("product_url") else p["permalink"]
+        try:
+            pcode, _, html = fetch(url)
+        except Exception as e:
+            pcode, html = why(e), ""
+        digits = str(amount)
+        grouped = re.escape(digits[0]) + "".join(r"[\s.,\u202f\u00a0]?" + re.escape(c) for c in digits[1:])
+        if pcode != 200:
+            found[f"shop:{name}:product"] = problem(CRIT, "shop", name, f"product page \"{p['name']}\" answers HTTP {pcode}")
+        elif not re.search(grouped + r"(?!\d)", visible(html)):
+            found[f"shop:{name}:price"] = problem(CRIT, "shop", name, f"product page \"{p['name']}\" doesn't show its price ({amount} {p['prices']['currency_code']})")
+    try:
+        ccode, _, _ = fetch(f"{api}/wp-json/wc/store/v1/cart")
+    except Exception as e:
+        ccode = why(e)
+    if ccode != 200:
+        found[f"shop:{name}:cart"] = problem(CRIT, "shop", name, f"cart/checkout backend answers HTTP {ccode} — customers can't order")
+    return found
+
+
 def check_expiries(items, now):
     found = {}
     today = datetime.date.fromtimestamp(now)
@@ -289,6 +358,8 @@ def main():
     with ThreadPoolExecutor(max_workers=12) as pool:   # dead hosts wait out timeouts in parallel, not in series
         hosts = [pool.submit(check_host, n, spec, th, ignore, now) for n, spec in conf["hosts"].items()]
         sites = [pool.submit(check_endpoint, e, th, now) for e in conf["endpoints"]]
+        sites += [pool.submit(check_shop, sh) for sh in conf.get("shops", [])]
+        sites += [pool.submit(check_content, h, m) for h, m in (conf.get("content") or {}).items()]
         for fut in hosts:
             f, i = fut.result()
             found.update(f)
@@ -309,6 +380,7 @@ def main():
     new = [p for k, p in found.items() if k not in prev or prev[k]["sev"] != p["sev"]]
     cleared = [p for k, p in prev.items() if k not in found]
     targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", [])) + len(conf.get("domains", [])) + \
+        len(conf.get("shops", [])) + len(conf.get("content") or {}) + \
         sum(len(u) for spec in conf["hosts"].values() for u in (spec.get("tenant_backups") or {}).values())
     stamp = datetime.datetime.fromtimestamp(now, TZ).strftime("%H:%M")
 
