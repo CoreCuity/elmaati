@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""fleet-backup-sources — backups that are NOT systemd units (cron scripts, JetBackup), as JSON facts.
+
+Reads a root-owned list of sources from /etc/fleet-status/backup-sources.json (installed from the elmaati
+repo, deploy/provision/hosts/<host>.json). Takes no input from the caller. For each source it reports:
+last_attempt and last_success (epoch seconds, or null), running, interval_h (the job's own cadence).
+
+Kinds:
+  log        {"name", "kind": "log", "path", "success": "<text on the success line>", "interval_h"}
+             Lines must carry a "[YYYY-mm-dd HH:MM:SS]" timestamp (server local time). last_attempt is the
+             newest timestamped line, last_success the newest line containing the success text.
+  jetbackup  {"name", "kind": "jetbackup"} — every enabled JetBackup 5 job becomes one source; the cadence
+             comes from the job's own last_run → next_run.
+
+fleetwatch may run it through exactly one sudo rule, with no arguments allowed:
+    fleetwatch ALL=(root) NOPASSWD: /usr/local/sbin/fleet-backup-sources ""
+
+Source of truth: elmaati repo, deploy/provision/fleet-backup-sources. Never edit on a server.
+"""
+import datetime
+import json
+import os
+import re
+import subprocess
+import time
+
+CONF = "/etc/fleet-status/backup-sources.json"
+STAMP = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]")
+
+
+def local_epoch(text):
+    return int(time.mktime(time.strptime(text, "%Y-%m-%d %H:%M:%S")))
+
+
+def iso_epoch(text):
+    return int(datetime.datetime.fromisoformat(text).timestamp()) if text else None
+
+
+def from_log(src):
+    out = {"name": src["name"], "kind": "log", "interval_h": src.get("interval_h", 24), "running": False,
+           "last_attempt": None, "last_success": None}
+    try:
+        with open(src["path"], "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 200_000))            # the tail is enough
+            lines = fh.read().decode(errors="ignore").splitlines()
+    except OSError as e:
+        return {**out, "error": f"can't read the log ({e.__class__.__name__})"}
+    for line in lines:
+        m = STAMP.search(line)
+        if not m:
+            continue
+        t = local_epoch(m.group(1))
+        out["last_attempt"] = max(out["last_attempt"] or 0, t)
+        if src["success"] in line:
+            out["last_success"] = max(out["last_success"] or 0, t)
+    return out
+
+
+def from_jetbackup():
+    try:
+        raw = subprocess.run(["jetbackup5api", "-F", "listBackupJobs", "-O", "json"],
+                             capture_output=True, text=True, timeout=60).stdout
+        jobs = json.loads(raw)["data"]["jobs"]
+    except Exception as e:
+        return [{"name": "jetbackup", "kind": "jetbackup", "error": f"can't list jobs ({e.__class__.__name__})"}]
+    out = []
+    for j in jobs:
+        if j.get("disabled"):
+            continue
+        last_run, next_run = iso_epoch(j.get("last_run")), iso_epoch(j.get("next_run"))
+        interval = round((next_run - last_run) / 3600, 1) if last_run and next_run and next_run > last_run else 24
+        out.append({"name": j.get("name"), "kind": "jetbackup", "interval_h": interval, "running": bool(j.get("running")),
+                    "last_attempt": last_run, "last_success": iso_epoch(j.get("last_completed"))})
+    return out
+
+
+def main():
+    try:
+        sources = json.load(open(CONF))
+    except (OSError, ValueError):
+        sources = []
+    out = []
+    for src in sources:
+        if src.get("kind") == "log":
+            out.append(from_log(src))
+        elif src.get("kind") == "jetbackup":
+            out.extend(from_jetbackup())
+    print(json.dumps(out))
+
+
+if __name__ == "__main__":
+    main()

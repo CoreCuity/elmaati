@@ -24,6 +24,15 @@ hosts:
     local_only_by_plan: [ajihost, paradisante]   # their plan has no off-site copy
     not_watched: [youandco]                      # client on hold, no interaction — no backup, no site/domain watch
 
+  # Client servers we don't host but look after (added 2026-09-28). Backups there are not systemd units:
+  # fleet-status reads them through fleet-backup-sources (list in elmaati deploy/provision/hosts/<name>.json).
+  desirs:
+    addr: 46.224.31.181                 # Désirs d'Orient Odoo (Hetzner)
+    backup_sources: [desirs-odoo-prod]  # nightly 02:00 cron → Storage Box
+  majormedia:
+    addr: ns1.majormedia.marketing      # cPanel host of adolia.ma (WooCommerce)
+    backup_sources: all                 # every enabled JetBackup 5 job, each against its own schedule
+
 thresholds:
   disk_warn_pct: 85
   disk_crit_pct: 95
@@ -59,10 +68,6 @@ endpoints:
   - paradisante.ma
   - ajihost.ma
   - api.ajihost.ma/api
-  # rec / rcpt-*: DNS still points at the dead server-architect (84.247.138.95); Caddy serves them on HQ.
-  - rcpt-hq.corecuity.com
-  - rcpt-desirs.corecuity.com
-  - rec.corecuity.com
 
 # Storefronts, end to end (every run): the WooCommerce Store API lists products, a live product page shows
 # the price the API reports, and the cart backend answers. product_url: the storefront's page for a slug

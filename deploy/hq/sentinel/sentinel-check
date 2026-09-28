@@ -100,6 +100,7 @@ def check_host(name, spec, th, ignore, now):
                 info.append(f"**{name}** — backed up locally only (no off-site copy): {', '.join(local_only)}")
             if unwatched:
                 info.append(f"**{name}** — tenants with no backup watched: {', '.join(unwatched)}")
+    found.update(judge_sources(name, d.get("backup_sources"), spec.get("backup_sources"), now))
     audit = d.get("fleet_audit")
     if audit:
         col = audit.get("fleet-audit-collector.service", {})
@@ -153,6 +154,37 @@ def judge_backups(host, scope, units, expected, th, now):
         if age_h is None or age_h > th["backup_max_age_h"]:
             when = "has never run" if age_h is None else f"last succeeded {age_h:.0f} h ago"
             found[key] = problem(CRIT, "backup", label, f"{when} on {host} (limit {th['backup_max_age_h']} h)")
+    return found
+
+
+def judge_sources(host, sources, expected, now):
+    """Backups that aren't systemd units (cron-log scripts, JetBackup jobs), each judged against its OWN
+    cadence: a run that started but never completed, or no success within 1.5 x its interval (+2 h slack)."""
+    found = {}
+    if not expected:
+        return found
+    if sources is None:
+        return {f"{host}:sources": problem(CRIT, "backup", f"backups on {host}", "can't be read (no source list or helper) — the watch is blind to them")}
+    seen = {s.get("name"): s for s in sources}
+    for s in sources:
+        if s.get("error"):
+            found[f"{host}:source:{s.get('name')}"] = problem(CRIT, "backup", s.get("name"), f"{s['error']} on {host}")
+    names = [s.get("name") for s in sources if not s.get("error")] if expected == "all" else expected
+    for n in names:
+        s = seen.get(n)
+        key = f"{host}:source:{n}"
+        if not s:
+            found[key] = problem(CRIT, "backup", n, f"not found on {host}")
+            continue
+        if s.get("error") or s.get("running"):
+            continue
+        ok, tried, every = s.get("last_success"), s.get("last_attempt"), float(s.get("interval_h") or 24)
+        when = lambda t: datetime.datetime.fromtimestamp(t, TZ).strftime("%-d %b %H:%M")
+        if tried and ok and tried - ok > 3600 and now - tried > 6 * 3600:
+            found[key] = problem(CRIT, "backup", n, f"the run started {when(tried)} never completed on {host} (last success {when(ok)})")
+        elif not ok or now - ok > (every * 1.5 + 2) * 3600:
+            age = "has never succeeded" if not ok else f"last succeeded {(now - ok) / 3600:.0f} h ago"
+            found[key] = problem(CRIT, "backup", n, f"{age} on {host} (runs every {every:g} h)")
     return found
 
 
@@ -396,7 +428,10 @@ def main():
     # A cleared key whose target was taken out of the config was not fixed — say so instead of "back to normal".
     names = set(conf["hosts"]) | {e.partition("/")[0] for e in conf["endpoints"]} | set(conf.get("domains", [])) | \
         {sh["name"] for sh in conf.get("shops", [])} | set(conf.get("content") or {}) | {x["name"] for x in conf.get("expiries", [])}
-    cleared = [{**p, "_watched": any(n in k for n in names)} for k, p in prev.items() if k not in found]
+    def target(key):   # the configured thing a problem key belongs to (exact name, not a substring)
+        kind, _, rest = key.partition(":")
+        return rest.split(":")[0] if kind in ("up", "tls", "domain", "shop", "expiry") else kind.split("/")[0]
+    cleared = [{**p, "_watched": target(k) in names} for k, p in prev.items() if k not in found]
     targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", [])) + len(conf.get("domains", [])) + \
         len(conf.get("shops", [])) + len(conf.get("content") or {}) + \
         sum(len(u) for spec in conf["hosts"].values() for u in (spec.get("tenant_backups") or {}).values())
@@ -407,8 +442,7 @@ def main():
         head = f"## 🛰️ Sentinel · daily check · {day}"
         status = f"✅ **All clear** — {targets} targets watched" if not found else \
                  f"**{len(found)} open** ({counts(found.values())}) · {targets} targets watched"
-        lines = [head, status, ""] + render(found.values()) + ["", "**Servers**"] + [f"▫️ {i}" for i in info] + \
-                ["", "-# Not watched yet: the Désirs box, MajorMedia."]
+        lines = [head, status, ""] + render(found.values()) + ["", "**Servers**"] + [f"▫️ {i}" for i in info]
         post("\n".join(lines), conf["discord_channel"], dry)
     elif new or cleared:
         parts = []

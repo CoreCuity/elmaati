@@ -1,0 +1,4 @@
+[
+  {"name": "desirs-odoo-prod", "kind": "log", "path": "/home/deploy/desirs-odoo/backups/backup.log",
+   "success": "Backup completed successfully.", "interval_h": 24}
+]

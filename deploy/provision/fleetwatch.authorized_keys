@@ -1,0 +1,1 @@
+restrict,command="/usr/local/bin/fleet-status" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINAgXihBIgQzcCi15LbzkZ/tmwpO4PL73LlUALQYgYSE fleet@corecuity

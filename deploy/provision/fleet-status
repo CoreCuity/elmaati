@@ -26,20 +26,32 @@ def run(cmd, timeout=15):
     except Exception as e:
         return f"ERROR: {e.__class__.__name__}"
 
+def reboot_required():
+    """Debian/Ubuntu flag file; on RHEL-family hosts (CloudLinux), `needs-restarting -r` exits 1 when a reboot is due."""
+    if os.path.exists("/var/run/reboot-required"):
+        return True
+    if shutil.which("needs-restarting"):
+        try:
+            return subprocess.run(["needs-restarting", "-r"], capture_output=True, timeout=30).returncode == 1
+        except Exception:
+            return False
+    return False
+
+
 def host():
     return {
         "hostname": socket.gethostname(),
         "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "uptime_seconds": int(float(open("/proc/uptime").read().split()[0])),
         "load": os.getloadavg(),
-        "reboot_required": os.path.exists("/var/run/reboot-required"),
+        "reboot_required": reboot_required(),
         "reboot_required_pkgs": (open("/var/run/reboot-required.pkgs").read().split()
                                  if os.path.exists("/var/run/reboot-required.pkgs") else []),
     }
 
 def disks():
     out = []
-    for line in run(["df", "-P", "-x", "tmpfs", "-x", "devtmpfs", "-x", "overlay"]).splitlines()[1:]:
+    for line in run(["df", "-P", "-x", "tmpfs", "-x", "devtmpfs", "-x", "overlay", "-x", "efivarfs"]).splitlines()[1:]:
         f = line.split()
         if len(f) >= 6:
             out.append({"fs": f[0], "size_kb": int(f[1]), "used_pct": int(f[4].rstrip("%")), "mount": f[5]})
@@ -105,6 +117,21 @@ def fleet_audit():
     return out or None
 
 
+SOURCES_HELPER = "/usr/local/sbin/fleet-backup-sources"
+
+
+def backup_sources():
+    """Backups that aren't systemd units (cron-log scripts, JetBackup), via the root helper
+    fleet-backup-sources (one sudo rule, no arguments). None when there's no source list on this host."""
+    if not (os.path.exists(SOURCES_HELPER) and os.path.exists("/etc/fleet-status/backup-sources.json")):
+        return None
+    raw = run(["sudo", "-n", SOURCES_HELPER], timeout=90)
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return [{"name": "backup-sources", "error": raw[:200]}]
+
+
 def timers():
     rows = []
     for line in run(["systemctl", "list-timers", "--all", "--no-legend", "--no-pager"]).splitlines():
@@ -129,7 +156,13 @@ def listening():
     return sorted(set(rows))
 
 def apt():
-    return {"upgradable": max(0, len(run(["apt", "list", "--upgradable"]).splitlines()) - 1)}
+    """Pending package updates. apt on Debian/Ubuntu; dnf (cache only, no network) on RHEL-family hosts."""
+    if shutil.which("apt"):
+        return {"upgradable": max(0, len(run(["apt", "list", "--upgradable"]).splitlines()) - 1)}
+    if shutil.which("dnf"):
+        out = run(["dnf", "-q", "-C", "check-update"], timeout=60)
+        return {"upgradable": sum(1 for l in out.splitlines() if l and not l.startswith((" ", "Obsoleting", "Security")) and "." in l.split()[0])}
+    return {"upgradable": 0}
 
 def main():
     print(json.dumps({
@@ -141,6 +174,7 @@ def main():
         "backup_units": backup_units(),
         "tenant_backups": tenant_backup_units(),
         "fleet_audit": fleet_audit(),
+        "backup_sources": backup_sources(),
         "timers": timers(),
         "certificates": certs(),
         "listening": listening(),
