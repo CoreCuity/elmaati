@@ -54,9 +54,8 @@ endpoints:
   - rec.corecuity.com
 
 # Credentials with a known expiry. Alert at 14, 7, 3 and 1 days out, and after expiry.
-# Only dates that were verified at the source belong here. CoreCuity's Meta user token (app "CoreCuity Ads",
-# sees every client's ad account; stored in .secrets/meta-ads.env on the Mac) is NOT listed: debug_token
-# (2026-09-24) shows expires_at = 0, so it has no hard expiry. Its data_access_expires_at is a rolling 90-day
-# window that renews with use, not a deadline. It dies on a password change or revocation instead, and the
-# fleet holds no Meta credential to probe that (fleet-v1 §6.3).
-expiries: []
+# Only dates verified at the source (debug_token etc.) belong here.
+expiries:
+  - name: CoreCuity Meta token (all clients' ad accounts)
+    date: 2026-11-27
+    action: extend it in the Access Token Debugger, then run clients/Adolia/scripts/swap-meta-token.sh --allow-user on the Mac
