@@ -99,6 +99,20 @@ def check_host(name, spec, th, ignore, now):
                 info.append(f"**{name}** — backed up locally only (no off-site copy): {', '.join(local_only)}")
             if unwatched:
                 info.append(f"**{name}** — tenants with no backup watched: {', '.join(unwatched)}")
+    audit = d.get("fleet_audit")
+    if audit:
+        col = audit.get("fleet-audit-collector.service", {})
+        watch = audit.get("fleet-audit-watch.service", {})
+        if col.get("active") != "active":
+            found[f"{name}:audit:collector"] = problem(CRIT, "host", name, "the tool-call log collector is down — fleet actions are not being recorded")
+        fin = watch.get("finished") or ""
+        age_m = (now - int(fin.lstrip("@"))) / 60 if fin.startswith("@") and fin != "@0" else None
+        if watch.get("result") not in (None, "success"):
+            found[f"{name}:audit:watch"] = problem(WARN, "host", name, "the tool-call log watcher's last run failed")
+        elif age_m is None or age_m > 30:
+            found[f"{name}:audit:watch"] = problem(WARN, "host", name, "the tool-call log watcher hasn't run for over 30 min")
+        info.append(f"**{name}** — tool-call log: collector {col.get('active', '?')}"
+                    + (f" · watcher checked {age_m:.0f} min ago" if age_m is not None else ""))
     parts = []
     if d["host"]["reboot_required"]:
         parts.append("reboot pending")
