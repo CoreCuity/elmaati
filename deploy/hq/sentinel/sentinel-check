@@ -11,6 +11,7 @@ Source of truth: core/elmaati/deploy/hq/sentinel/ (installed root-owned by insta
 import datetime
 import json
 import os
+import re
 import socket
 import ssl
 import subprocess
@@ -25,6 +26,7 @@ import yaml
 
 CONF = "/usr/local/lib/sentinel/sentinel.yaml"
 STATE = os.path.expanduser("~/.local/state/sentinel/state.json")
+DOMAINS = os.path.expanduser("~/.local/state/sentinel/domains.json")   # expiry cache, refreshed daily
 KEY = os.path.expanduser("~/.ssh/fleet_ed25519")
 ENV = os.path.expanduser("~/.hermes/.env")
 UA = "corecuity-sentinel (v0; +https://corecuity.com)"
@@ -33,7 +35,7 @@ TZ = zoneinfo.ZoneInfo("Africa/Casablanca")   # founders read times in Moroccan 
 CRIT, WARN = "🔴", "🟠"
 # Order and headings of the groups in a message.
 GROUPS = [("down", "Sites down"), ("tls", "Certificates"), ("backup", "Backups"),
-          ("host", "Servers"), ("expiry", "Expiring credentials")]
+          ("host", "Servers"), ("domain", "Domains"), ("expiry", "Expiring credentials")]
 
 
 def problem(sev, group, subject, detail):
@@ -173,6 +175,65 @@ def check_endpoint(entry, th, now):
     return found
 
 
+def domain_expiry(domain):
+    """Registration expiry date (YYYY-MM-DD) from the registry: RDAP where the TLD has it (.com, .online…),
+    port-43 WHOIS for .ma (registre.ma has no RDAP)."""
+    tld = domain.rsplit(".", 1)[1]
+    if tld == "ma":
+        with socket.create_connection(("whois.registre.ma", 43), timeout=15) as s:
+            s.sendall((domain + "\r\n").encode())
+            text = b"".join(iter(lambda: s.recv(4096), b"")).decode(errors="ignore")
+        m = re.search(r"(?im)^\s*(?:Expiry Date|Expiration Date|Registry Expiry Date)\s*:\s*(\d{4}-\d{2}-\d{2})", text)
+        if not m:
+            raise ValueError("no expiry date in the WHOIS answer")
+        return m.group(1)
+    boot = json.load(urllib.request.urlopen("https://data.iana.org/rdap/dns.json", timeout=20))
+    base = next((urls[0] for tlds, urls in boot["services"] if tld in tlds), None)
+    if not base:
+        raise ValueError(f"no RDAP service for .{tld}")
+    req = urllib.request.Request(base.rstrip("/") + "/domain/" + domain, headers={"User-Agent": UA})
+    events = json.load(urllib.request.urlopen(req, timeout=20)).get("events", [])
+    date = next((e["eventDate"][:10] for e in events if e.get("eventAction") == "expiration"), None)
+    if not date:
+        raise ValueError("no expiration event in the RDAP answer")
+    return date
+
+
+def check_domains(domains, th, now):
+    """Domain registrations. Looked up at most once a day per domain (cached); a failed lookup keeps the
+    last known date and only becomes a problem after 3 days without a fresh answer."""
+    found = {}
+    try:
+        cache = json.load(open(DOMAINS))
+    except (OSError, ValueError):
+        cache = {}
+    today = datetime.date.fromtimestamp(now)
+    for d in domains:
+        c = cache.get(d, {})
+        if now - c.get("checked", 0) > 86400:
+            try:
+                c = {"expires": domain_expiry(d), "checked": now, "ok": now}
+            except Exception as e:
+                c = {**c, "checked": now, "error": why(e)}
+            cache[d] = c
+        # A lookup failure is not a problem until there has been no fresh answer for 3 days.
+        since = c.get("ok") or c.setdefault("first_fail", now)
+        if now - since > 3 * 86400:
+            last = f"; last known {c['expires']}" if c.get("expires") else ""
+            found[f"domain:{d}:lookup"] = problem(WARN, "domain", d, f"expiry lookups failing for 3 days ({c.get('error')}){last}")
+        if not c.get("expires"):
+            continue
+        days = (datetime.date.fromisoformat(c["expires"]) - today).days
+        if days <= th["domain_warn_days"]:
+            sev = CRIT if days <= th["domain_crit_days"] else WARN
+            step = next((s for s in (7, 14, 30) if days <= s), 30) if days >= 0 else "expired"
+            text = f"**expired** on {c['expires']}" if days < 0 else f"registration expires **{c['expires']}** (in {days} days)"
+            found[f"domain:{d}:{step}"] = problem(sev, "domain", d, text + " → renew it at the registrar")
+    os.makedirs(os.path.dirname(DOMAINS), exist_ok=True)
+    json.dump(cache, open(DOMAINS, "w"), indent=1)
+    return found
+
+
 def check_expiries(items, now):
     found = {}
     today = datetime.date.fromtimestamp(now)
@@ -235,6 +296,7 @@ def main():
         for fut in sites:
             found.update(fut.result())
     found.update(check_expiries(conf.get("expiries", []), now))
+    found.update(check_domains(conf.get("domains", []), th, now))
 
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     try:
@@ -246,7 +308,7 @@ def main():
     # must not re-alert every 15 minutes.
     new = [p for k, p in found.items() if k not in prev or prev[k]["sev"] != p["sev"]]
     cleared = [p for k, p in prev.items() if k not in found]
-    targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", [])) + \
+    targets = len(conf["hosts"]) + len(conf["endpoints"]) + len(conf.get("expiries", [])) + len(conf.get("domains", [])) + \
         sum(len(u) for spec in conf["hosts"].values() for u in (spec.get("tenant_backups") or {}).values())
     stamp = datetime.datetime.fromtimestamp(now, TZ).strftime("%H:%M")
 
