@@ -1,0 +1,26 @@
+# /etc/caddy/Caddyfile on corecuity-HQ (169.58.195.92) — the host's public web front.
+#
+# Source of truth: elmaati repo, deploy/hq/caddy/. Never edit on the server — deploy with ./deploy.sh
+# (validate → timestamped backup → install → reload). A route only survives a reload if it is in this file:
+# never push config through Caddy's admin API.
+#
+# History: until 2026-09-28 this file was the AI Receptionist's Caddyfile.rcpt (rec / rcpt-hq / rcpt-desirs).
+# Those names had no DNS pointing here and were dropped (Najlaa, 2026-09-28). SIP (sip-rcpt.corecuity.com)
+# is UDP straight to Asterisk and never goes through Caddy.
+
+# corecuity.com — no public marketing site yet. Serves static files from /var/www/corecuity (a holding page
+# now; client pages go under /{client}/{period} as before). Gray-cloud DNS so HTTP-01 reaches :80 directly.
+corecuity.com, www.corecuity.com {
+	encode zstd gzip
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	root * /var/www/corecuity
+	try_files {path} {path}.html {path}/index.html
+	file_server
+}

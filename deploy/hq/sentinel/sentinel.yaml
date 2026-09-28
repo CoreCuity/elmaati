@@ -53,6 +53,8 @@ ignore_failed_units: [systemd-networkd-wait-online.service, cloud-init.service]
 # Public endpoints, checked from HQ: HTTPS answers (< 400, redirects and auth walls count as up) + certificate
 # expiry. `host/path` checks that path (APIs whose root is a 404 by design).
 endpoints:
+  - corecuity.com                # holding page on corecuity-HQ (deploy/hq/caddy), since 2026-09-28
+  - www.corecuity.com
   - plane.corecuity.com
   - mail.corecuity.com
   - status.corecuity.com
