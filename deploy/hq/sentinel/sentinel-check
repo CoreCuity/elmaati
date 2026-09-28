@@ -188,22 +188,29 @@ def judge_sources(host, sources, expected, now):
     return found
 
 
-def check_endpoint(entry, th, now):
+def check_endpoint(entry, th, now, origin=None):
+    """HTTPS answers (through the public DNS, i.e. through Cloudflare when proxied) + certificate expiry.
+    For a proxied site the certificate that matters is the ORIGIN's (Cloudflare renews its own edge cert),
+    so when the origin IP is known the certificate is read straight from the origin, with the site's name."""
     host, _, path = entry.partition("/")   # "api.example.com/api" checks that path; default is "/"
     found = {}
+    where = "origin " if origin else ""
     try:
         ctx = ssl.create_default_context()
-        with socket.create_connection((host, 443), timeout=10) as s, ctx.wrap_socket(s, server_hostname=host) as t:
+        with socket.create_connection((origin or host, 443), timeout=10) as s, ctx.wrap_socket(s, server_hostname=host) as t:
             not_after = ssl.cert_time_to_seconds(t.getpeercert()["notAfter"])
         days = (not_after - now) / 86400
         if days < th["tls_warn_days"]:
             sev = CRIT if days < th["tls_crit_days"] else WARN
-            found[f"tls:{host}"] = problem(sev, "tls", host, f"certificate expires in {days:.0f} days")
+            found[f"tls:{host}"] = problem(sev, "tls", host, f"{where}certificate expires in {days:.0f} days")
     except ssl.SSLCertVerificationError as e:
-        found[f"tls:{host}"] = problem(CRIT, "tls", host, f"certificate invalid ({e.verify_message})")
+        found[f"tls:{host}"] = problem(CRIT, "tls", host, f"{where}certificate invalid ({e.verify_message})")
         return found
     except Exception as e:
-        found[f"up:{host}"] = problem(CRIT, "down", host, why(e))
+        if origin:
+            found[f"up:{host}"] = problem(CRIT, "down", host, f"origin {origin} {why(e)}")
+        else:
+            found[f"up:{host}"] = problem(CRIT, "down", host, why(e))
         return found
 
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -404,7 +411,8 @@ def main():
     ignore = set(conf.get("ignore_failed_units", []))
     with ThreadPoolExecutor(max_workers=12) as pool:   # dead hosts wait out timeouts in parallel, not in series
         hosts = [pool.submit(check_host, n, spec, th, ignore, now) for n, spec in conf["hosts"].items()]
-        sites = [pool.submit(check_endpoint, e, th, now) for e in conf["endpoints"]]
+        origin = {h: ip for ip, names in (conf.get("origins") or {}).items() for h in names}
+        sites = [pool.submit(check_endpoint, e, th, now, origin.get(e.partition("/")[0])) for e in conf["endpoints"]]
         sites += [pool.submit(check_shop, sh) for sh in conf.get("shops", [])]
         sites += [pool.submit(check_content, h, m) for h, m in (conf.get("content") or {}).items()]
         for fut in hosts:
