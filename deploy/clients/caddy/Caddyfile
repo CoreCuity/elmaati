@@ -1,0 +1,257 @@
+# /etc/caddy/Caddyfile on corecuity-clients (161.97.166.112) — every client site's public web front.
+#
+# Source of truth: elmaati repo, deploy/clients/caddy/. Never edit on the server — deploy with ./deploy.sh
+# (validate on host → timestamped backup → install → reload). Brought into git 2026-09-29 from the live file.
+# Basic-auth hashes live ONLY on the server in /etc/caddy/auth.caddy (imported below; never committed).
+# REQUIRES Caddy >= 2.7 (trusted_proxies / client_ip_headers). The host still runs Ubuntu's 2.6.2 (2026-09-29):
+# `./deploy.sh --check` fails until Caddy is upgraded — upgrade first, then deploy.
+
+# Global options
+{
+    email admin@corecuity.com
+    # Admin API moved off 127.0.0.1:2019 (2026-08-20): any local user could
+    # POST /load and hijack every vhost on this box. Unix socket = caddy user only.
+    admin unix//run/caddy/admin.sock
+
+    # Real visitor IPs behind Cloudflare's proxy (2026-09-29). Only requests arriving FROM Cloudflare's own
+    # ranges are trusted to name the client: Caddy then takes the visitor's IP from CF-Connecting-IP and
+    # passes it on in X-Forwarded-For to WordPress, Odoo, Next.js and the logs. Anything else can't spoof it.
+    # Ranges: Cloudflare API /ips (etag 38f79d050aa027e3be3865e495dcc9bc) — refresh if Cloudflare changes them.
+    servers {
+        trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+        client_ip_headers CF-Connecting-IP X-Forwarded-For
+    }
+}
+
+# Basic-auth snippets (auth_netdata, auth_paradisante_stage) — server-only file, see header.
+import auth.caddy
+
+# --- Shared security headers (ODAE-51, 2026-08-03) ------------------------
+# Defined here rather than in the Next.js or WordPress config so they cover
+# every host on this server, including any added later, without depending on
+# a framework staying configured.
+#
+# HSTS max-age is deliberately 1 day, not a year. A browser honours HSTS for
+# its full duration no matter what the server later says, so a long max-age
+# set on a domain that turns out to be misconfigured is genuinely painful to
+# undo. Raise to 31536000 once odae.ma has been stable for a week; do not add
+# `preload` before that, since removal from the preload list takes months.
+(security_headers) {
+    header {
+        Strict-Transport-Security "max-age=86400"
+        # `?` = set only if absent. WordPress already sends this, and a plain
+        # set appends rather than replaces on a proxied response, so the
+        # backend was answering with the header twice.
+        ?X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    }
+}
+
+# Storefront: nothing should ever frame a checkout that collects names, phone
+# numbers and delivery addresses. frame-ancestors is the modern form and
+# X-Frame-Options is kept for older browsers that ignore it.
+(no_framing) {
+    header {
+        Content-Security-Policy "frame-ancestors none"
+        X-Frame-Options "DENY"
+    }
+}
+
+# Client and service routes added below — one block per domain.
+
+monitor.corecuity.com {
+    reverse_proxy localhost:19999
+    import auth_netdata
+}
+
+mail.corecuity.com, mail.paradisante.ma, autoconfig.paradisante.ma, autodiscover.paradisante.ma, autoconfig.ajihost.ma, autodiscover.ajihost.ma {
+    reverse_proxy https://localhost:8026 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+    }
+}
+
+# --- Paradisanté (added 2026-05-13) ---
+paradisante.ma {
+    reverse_proxy localhost:8081
+}
+
+www.paradisante.ma {
+    redir https://paradisante.ma{uri} permanent
+}
+
+# --- Plane PM (rootless, added 2026-05-16) ---
+plane.corecuity.com {
+    reverse_proxy localhost:8082
+}
+
+status.corecuity.com {
+	# same credentials as monitor.corecuity.com (admin / <existing password>)
+	import auth_netdata
+	# read-only Netdata data API for the custom dashboard
+	handle /api/* {
+		reverse_proxy localhost:19999
+	}
+	# the custom status dashboard (static page); NOT the agent's React UI
+	handle {
+		root * /var/www/corecuity-status
+		file_server
+	}
+}
+
+# ===== AjiHost — production (ajihost.ma) ====================================
+
+ajihost.ma {
+    reverse_proxy localhost:8083
+}
+
+api.ajihost.ma {
+    reverse_proxy localhost:8084
+}
+
+deploy.ajihost.ma {
+    reverse_proxy localhost:8085
+}
+
+pgadmin.ajihost.ma {
+    reverse_proxy localhost:8079
+}
+
+# ===== AjiHost — staging (stage.ajihost.ma) =================================
+
+stage.ajihost.ma {
+    reverse_proxy localhost:8086
+}
+
+stage-api.ajihost.ma {
+    reverse_proxy localhost:8087
+}
+
+stage-deploy.ajihost.ma {
+    reverse_proxy localhost:8088
+}
+
+stage-pgadmin.ajihost.ma {
+    reverse_proxy localhost:8089
+}
+
+mta-sts.corecuity.com {
+    root * /var/www/mta-sts
+    file_server
+}
+
+# ===== Odae — production (odae.corecuity.com / wp-odae.corecuity.com) =======
+
+# --- Canonical, from the 2026-08-03 cutover -------------------------------
+
+odae.ma {
+    import security_headers
+    import no_framing
+
+    # Convenience shortcut to the headless WordPress backoffice.
+    @admin path /admin /admin/
+    redir @admin https://wp.odae.ma/wp-admin 302
+
+    reverse_proxy localhost:8091
+}
+
+# Apex is canonical; www exists only so a typed-in www does not fail.
+www.odae.ma {
+    import security_headers
+    redir https://odae.ma{uri} permanent
+}
+
+wp.odae.ma {
+    import security_headers
+    # SAMEORIGIN, not DENY: wp-admin frames its own screens (media, previews),
+    # and DENY would break the backoffice the client has to work in.
+    header X-Frame-Options "SAMEORIGIN"
+
+    # XML-RPC is deliberately NOT blocked here any more. The WooCommerce iOS
+    # app pings xmlrpc.php during site detection, before either login method,
+    # so a 403 stopped the client's phone from ever reaching a login screen.
+    #
+    # The block moved into PHP instead, where it can be selective:
+    # wp-content/mu-plugins/harden.php removes system.multicall — the real
+    # problem, since it batched hundreds of password guesses into ONE request
+    # and so bypassed any request-counting throttle — and removes pingback.*,
+    # which made this box a DDoS reflector. The authenticated methods that
+    # remain are covered by the same 10-per-15-min throttle as wp-login.php,
+    # because XML-RPC logins run through the `authenticate` filter too.
+
+    # Ship-with-WordPress files that state the exact core version. Blocked here
+    # rather than deleted because a core update restores them.
+    @wpmeta path /readme.html /license.txt /wp-config-sample.php
+    respond @wpmeta 404
+
+    reverse_proxy localhost:8090 {
+        # Apache and PHP announce their exact versions on every response,
+        # which is free reconnaissance. Caddy still sends its own Server header.
+        header_down -X-Powered-By
+        header_down -Server
+    }
+}
+
+# --- Old hostnames: retired 2026-08-03, now forwarding --------------------
+# 302 rather than 301, deliberately. Nothing is indexed and nothing has been
+# shared on the old hostnames, so there is no SEO value in a permanent
+# redirect — but a 301 is cached by browsers and would survive a rollback,
+# stranding anyone who had visited during the launch window. Promote to
+# `permanent` once the 48h monitoring window closes.
+
+odae.corecuity.com {
+    redir https://odae.ma{uri} 302
+}
+
+wp-odae.corecuity.com {
+    redir https://wp.odae.ma{uri} 302
+}
+
+# --- Adolia Odoo 19 (migrated from contabo-deploy, 2026-08-17) ---
+adolia.odoobooking.online {
+    # --- SECURITY 2026-08-23: block Odoo database manager ---
+    # Was publicly reachable (HTTP 200) and used to compromise the staging
+    # Postgres container on 2026-08-22 (Monero miner). Defence-in-depth:
+    # list_db = False is also set in odoo.conf / odoo-stage.conf.
+    @dbmgr path /web/database/manager* /web/database/selector* /web/database/create* /web/database/duplicate* /web/database/drop* /web/database/backup* /web/database/restore* /web/database/change_password*
+    respond @dbmgr 403
+    import security_headers
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8094
+}
+
+adolia-stage.odoobooking.online {
+    # --- SECURITY 2026-08-23: block Odoo database manager ---
+    # Was publicly reachable (HTTP 200) and used to compromise the staging
+    # Postgres container on 2026-08-22 (Monero miner). Defence-in-depth:
+    # list_db = False is also set in odoo.conf / odoo-stage.conf.
+    @dbmgr path /web/database/manager* /web/database/selector* /web/database/create* /web/database/duplicate* /web/database/drop* /web/database/backup* /web/database/restore* /web/database/change_password*
+    respond @dbmgr 403
+    import security_headers
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8096
+}
+
+# --- Paradisanté staging (Phase 1 étape 1.1b, added 2026-08-17) ---
+# Copie de test. basicauth + noindex : ne doit jamais être indexée ni publique.
+stage.paradisante.ma {
+    import auth_paradisante_stage
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    reverse_proxy localhost:8098
+}
+
+# --- You&Co (tenant youandco, added 2026-08-24) ---------------------------
+# Laravel app built by Technopek. Backend is rootless Docker on 127.0.0.1:8100
+# (nginx -> php-fpm -> mysql). TrustProxies is "*" on their side, so the app
+# derives scheme/host from X-Forwarded-*; nothing else is needed here.
+youandco.online {
+    import security_headers
+    reverse_proxy localhost:8100
+}
+
+www.youandco.online {
+    redir https://youandco.online{uri} permanent
+}
+# -------------------------------------------------------------------------
