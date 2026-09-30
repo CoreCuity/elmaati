@@ -24,3 +24,18 @@ corecuity.com, www.corecuity.com {
 	try_files {path} {path}.html {path}/index.html
 	file_server
 }
+
+# Browser voice surface. Caddy forwards /talk WebSocket upgrades automatically.
+# Najlaa authorized restoration on 2026-09-30; upstream is rcpt-voice.service.
+rec.corecuity.com {
+	encode zstd gzip
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8787
+}
