@@ -67,8 +67,14 @@ When a founder asks for the brief outside the job, get the same facts with
    Plane covers it, and give its date: "(noted 24 Sep)".
 8. **No money, no customer data, no secrets, no server paths.** Client
    contacts by role and first name only.
-9. **Never invent progress.** If the facts do not show it, it did not happen.
-10. Under 2,500 characters. Cut detail before cutting a client.
+9. **Never invent progress or impact.** If the facts do not show it, it did
+   not happen. Do not say an item "blocks" or "delays" something unless the
+   facts say so; an overdue item may simply not have been closed — write
+   "overdue, still open on the board".
+10. **Internal is three bullets at most**, one per board, blocked and due
+    first. Changes are a count ("CORE: 8 items moved since 2 Oct"), never a
+    list of keys.
+11. Under 2,500 characters. Cut detail before cutting a client.
 
 ## Shadow footer
 
