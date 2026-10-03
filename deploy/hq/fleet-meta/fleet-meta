@@ -1,0 +1,4 @@
+#!/bin/sh
+# fleet-meta — what the fleet runs to read Meta ads. It holds nothing: it hands the call to
+# fleet-meta-read as the user `fleetmeta`, the only holder of the token. See fleet-meta-read.
+exec sudo -n -u fleetmeta /usr/local/libexec/fleet-meta-read "$@"

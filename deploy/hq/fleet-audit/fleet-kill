@@ -86,7 +86,7 @@ revoke() {
   local q; q="${QUAR}/$(date -u +%Y%m%dT%H%M%SZ)"
   install -d -m0700 "$QUAR" "$q"
   local f
-  for f in "${HH}/.env:hermes.env" "${HH}/auth.json:auth.json" "${H}/.ssh/fleet_ed25519:fleet_ed25519" "/etc/fleet-plane/token:fleet-plane.token"; do
+  for f in "${HH}/.env:hermes.env" "${HH}/auth.json:auth.json" "${H}/.ssh/fleet_ed25519:fleet_ed25519" "/etc/fleet-plane/token:fleet-plane.token" "/etc/fleet-meta/token:fleet-meta.token"; do
     [ -f "${f%%:*}" ] && mv "${f%%:*}" "${q}/${f##*:}" && log "quarantined ${f%%:*}"
   done
   for f in "${HH}"/profiles/*/.env "${HH}"/profiles/*/auth.json; do
@@ -108,6 +108,8 @@ Credentials are off the box's live paths (${q}). Revoke them at the source — a
   5. Mailcow  — deactivate fleet@corecuity.com
   6. SSH      — remove the fleet key from fleetwatch@corecuity-HQ and fleetwatch@corecuity-clients
                 (~fleetwatch/.ssh/authorized_keys)
+  7. Meta     — CoreCuity's Meta token is shared with the Mac scripts: if the box was compromised, revoke it
+                (Business settings → app "CoreCuity Ads"), issue a new one and run swap-meta-token.sh
 Resuming after revoke needs freshly issued credentials — fleet-kill resume will not bring these back.
 EOF
 }

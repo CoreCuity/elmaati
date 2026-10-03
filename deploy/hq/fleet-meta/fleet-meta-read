@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""fleet-meta-read — the fleet's read-only view of Meta ads (fleet-v1 §3 Ads, §6.3; Najlaa 2026-10-03).
+
+Runs as the system user `fleetmeta`, the only holder of CoreCuity's Meta token
+(/etc/fleet-meta/token). svc-hermes reaches it through /usr/local/bin/fleet-meta and one
+sudo rule; it never sees the token.
+
+The token is CoreCuity's user token and reaches EVERY client's ad account (§6.3, the written
+exception). This file is what narrows it:
+  - GET only: there is no other HTTP method in this file.
+  - Ad accounts in ACCOUNTS only (Adolia). Odae's ads stopped 2026-09-25.
+  - Fixed fields; no ad comments, no audiences, no customer data, no creative text.
+  - Conversation-depth and reply-rate metrics are not returned (Adolia report standard 2026-08-01).
+  - Every call is logged to journald (tag fleet-meta).
+
+  fleet-meta account CLIENT
+  fleet-meta live CLIENT                                      campaigns / ad sets / ads that can deliver
+  fleet-meta results CLIENT --level=campaign|adset|ad --since=D --until=D [--daily]
+  fleet-meta changes CLIENT --since=YYYY-MM-DD                who changed what in the account
+
+Dates are the ad account's own days (Adolia: America/Los_Angeles).
+Exit codes: 0 ok · 4 refused · 5 Meta did not answer.
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import sys
+import syslog
+import urllib.error
+import urllib.parse
+import urllib.request
+
+GRAPH = "https://graph.facebook.com/v25.0"
+TOKEN_FILE = "/etc/fleet-meta/token"
+ACCOUNTS = {"adolia": "act_2039753509440045"}
+KEEP_ACTIONS = {  # Meta action type → what we call it
+    "onsite_conversion.messaging_conversation_started_7d": "conversations_started",
+    "link_click": "link_clicks",
+    "onsite_conversion.messaging_block": "blocked_us",
+    "lead": "leads",
+    "offsite_conversion.fb_pixel_purchase": "website_purchases",
+}
+LIVE = ["ACTIVE", "WITH_ISSUES", "DISAPPROVED", "PENDING_REVIEW", "IN_PROCESS", "CAMPAIGN_PAUSED", "ADSET_PAUSED"]
+MAX_OUT = 60_000
+TIMEOUT = 30
+
+
+class Refused(Exception):
+    pass
+
+
+class MetaDown(Exception):
+    pass
+
+
+def log(msg: str) -> None:
+    syslog.openlog("fleet-meta", 0, syslog.LOG_AUTH)
+    syslog.syslog(syslog.LOG_INFO, f"caller={os.environ.get('SUDO_USER', '?')} {msg}")
+
+
+def token() -> str:
+    try:
+        return open(TOKEN_FILE).read().strip()
+    except OSError as e:
+        raise MetaDown(f"token unreadable: {e.strerror}")
+
+
+def get(path: str, params: dict) -> dict:
+    q = dict(params, access_token=token())
+    url = f"{GRAPH}/{path}?{urllib.parse.urlencode(q)}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "fleet-meta/1"}),
+                                    timeout=TIMEOUT) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            err = json.load(e).get("error", {})
+        except ValueError:
+            err = {}
+        code = err.get("code")
+        if code == 190:
+            raise MetaDown("the Meta token is expired or revoked — a founder must renew it")
+        if code in (4, 17, 32, 613):
+            raise MetaDown("Meta rate limit — try again later")
+        raise MetaDown(f"Meta HTTP {e.code}: {err.get('message', '')[:200]}")
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise MetaDown(f"Meta unreachable: {getattr(e, 'reason', e)}")
+
+
+def pages(path: str, params: dict, cap: int = 500) -> list:
+    out, after = [], None
+    while len(out) < cap:
+        p = dict(params, limit=100)
+        if after:
+            p["after"] = after
+        d = get(path, p)
+        out += d.get("data", [])
+        after = d.get("paging", {}).get("cursors", {}).get("after")
+        if not d.get("paging", {}).get("next"):
+            break
+    return out[:cap]
+
+
+def account(name: str) -> str:
+    a = ACCOUNTS.get(name.lower())
+    if not a:
+        raise Refused(f"ad account {name!r} is not one the fleet may read ({', '.join(ACCOUNTS)})")
+    return a
+
+
+def day(s: str) -> str:
+    try:
+        dt.date.fromisoformat(s)
+    except ValueError:
+        raise Refused(f"not a date (YYYY-MM-DD): {s!r}")
+    return s
+
+
+def money(cents) -> float | None:
+    return None if cents in (None, "") else round(int(cents) / 100, 2)
+
+
+def cmd_account(a) -> dict:
+    d = get(account(a.client), {"fields": "name,account_status,disable_reason,currency,timezone_name,spend_cap,amount_spent"})
+    return {"client": a.client, "name": d.get("name"), "status": {1: "active", 2: "disabled", 3: "unsettled",
+            7: "pending review", 9: "in grace period", 101: "closed"}.get(d.get("account_status"), str(d.get("account_status"))),
+            "disable_reason": d.get("disable_reason") or None, "currency": d.get("currency"),
+            "timezone": d.get("timezone_name"), "spend_cap": money(d.get("spend_cap")),
+            "lifetime_spent": money(d.get("amount_spent"))}
+
+
+def cmd_live(a) -> dict:
+    act = account(a.client)
+    filt = json.dumps([{"field": "effective_status", "operator": "IN", "value": LIVE}])
+    camps = pages(f"{act}/campaigns", {"fields": "name,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time",
+                                       "filtering": filt})
+    sets = pages(f"{act}/adsets", {"fields": "name,campaign_id,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time",
+                                   "filtering": filt})
+    ads = pages(f"{act}/ads", {"fields": "name,adset_id,campaign_id,effective_status,issues_info", "filtering": filt})
+    return {
+        "client": a.client,
+        "campaigns": [{"id": c["id"], "name": c["name"], "status": c["effective_status"], "objective": c.get("objective"),
+                       "daily_budget": money(c.get("daily_budget")), "lifetime_budget": money(c.get("lifetime_budget")),
+                       "start": (c.get("start_time") or "")[:10], "stop": (c.get("stop_time") or "")[:10] or None} for c in camps],
+        "ad_sets": [{"id": s["id"], "name": s["name"], "campaign_id": s["campaign_id"], "status": s["effective_status"],
+                     "daily_budget": money(s.get("daily_budget")), "lifetime_budget": money(s.get("lifetime_budget")),
+                     "goal": s.get("optimization_goal"), "start": (s.get("start_time") or "")[:10],
+                     "end": (s.get("end_time") or "")[:10] or None} for s in sets],
+        "ads": [{"id": x["id"], "name": x["name"], "ad_set_id": x["adset_id"], "status": x["effective_status"],
+                 "issues": [i.get("error_summary") or i.get("error_message", "")[:150] for i in x.get("issues_info") or []]}
+                for x in ads],
+    }
+
+
+def cmd_results(a) -> dict:
+    act = account(a.client)
+    since, until = day(a.since), day(a.until)
+    if since > until or (dt.date.fromisoformat(until) - dt.date.fromisoformat(since)).days > 92:
+        raise Refused("date range must be 1 to 93 days, since ≤ until")
+    lvl = a.level
+    p = {"level": lvl, "time_range": json.dumps({"since": since, "until": until}),
+         "fields": f"{lvl}_id,{lvl}_name,spend,impressions,reach,frequency,ctr,cpm,actions"}
+    if lvl != "campaign":
+        p["fields"] += ",campaign_name"
+    if a.daily:
+        p["time_increment"] = 1
+    rows = []
+    for r in pages(f"{act}/insights", p, cap=800):
+        acts = {KEEP_ACTIONS[x["action_type"]]: int(float(x["value"])) for x in r.get("actions") or [] if x["action_type"] in KEEP_ACTIONS}
+        spend = float(r.get("spend") or 0)
+        conv = acts.get("conversations_started", 0)
+        rows.append({
+            **({"date": r["date_start"]} if a.daily else {}),
+            "id": r.get(f"{lvl}_id"), "name": r.get(f"{lvl}_name"),
+            **({"campaign": r.get("campaign_name")} if lvl != "campaign" else {}),
+            "spend": round(spend, 2), "impressions": int(r.get("impressions") or 0), "reach": int(r.get("reach") or 0),
+            "frequency": round(float(r.get("frequency") or 0), 2), "ctr_pct": round(float(r.get("ctr") or 0), 2),
+            "cpm": round(float(r.get("cpm") or 0), 2), **acts,
+            "cost_per_conversation": round(spend / conv, 2) if conv else None,
+        })
+    return {"client": a.client, "level": lvl, "since": since, "until": until, "daily": bool(a.daily), "rows": rows}
+
+
+def cmd_changes(a) -> dict:
+    act = account(a.client)
+    since = day(a.since)
+    ts = int(dt.datetime.fromisoformat(since).replace(tzinfo=dt.timezone.utc).timestamp())
+    ev = pages(f"{act}/activities", {"fields": "event_type,event_time,actor_name,object_name,object_type,extra_data",
+                                     "since": ts}, cap=300)
+    out = []
+    for e in ev:
+        try:
+            x = json.loads(e.get("extra_data") or "{}")
+        except ValueError:
+            x = {}
+        if not isinstance(x, dict):
+            x = {}
+        out.append({"when": (e.get("event_time") or "")[:16].replace("T", " "), "who": e.get("actor_name"),
+                    "what": e.get("event_type"), "object": e.get("object_name"), "object_type": e.get("object_type"),
+                    "from": x.get("old_value") if not isinstance(x.get("old_value"), (dict, list)) else None,
+                    "to": x.get("new_value") if not isinstance(x.get("new_value"), (dict, list)) else None})
+    return {"client": a.client, "since": since, "count": len(out), "changes": out}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="fleet-meta", description="Read-only Meta ads for the fleet.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for c in ("account", "live"):
+        sub.add_parser(c).add_argument("client")
+    s = sub.add_parser("results")
+    s.add_argument("client")
+    s.add_argument("--level", choices=["campaign", "adset", "ad"], default="adset")
+    s.add_argument("--since", required=True)
+    s.add_argument("--until", required=True)
+    s.add_argument("--daily", action="store_true")
+    s = sub.add_parser("changes")
+    s.add_argument("client")
+    s.add_argument("--since", required=True)
+
+    argv = sys.argv[1:]
+    try:
+        a = ap.parse_args(argv)
+    except SystemExit as e:
+        if e.code == 0:
+            return 0
+        print(json.dumps({"ok": False, "exit_code": 4, "error": "bad arguments; see fleet-meta --help"}))
+        log(f"refused args={argv!r}")
+        return 4
+    try:
+        out = {"ok": True, **{"account": cmd_account, "live": cmd_live, "results": cmd_results,
+                              "changes": cmd_changes}[a.cmd](a)}
+        code = 0
+    except Refused as e:
+        out, code = {"ok": False, "exit_code": 4, "error": str(e)}, 4
+    except MetaDown as e:
+        out, code = {"ok": False, "exit_code": 5, "error": str(e)}, 5
+    s = json.dumps(out, ensure_ascii=False)
+    if len(s) > MAX_OUT:
+        s = json.dumps({"ok": False, "exit_code": 4, "error": f"answer too large ({len(s)} chars): narrow the dates or level"})
+        code = 4
+    print(s)
+    log(f"cmd={a.cmd} args={argv!r} exit={code} bytes={len(s)}")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
