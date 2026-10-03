@@ -99,6 +99,14 @@ def day(s: str) -> str:
     return s
 
 
+def rng(lo: int, hi: int):
+    def f(v: str) -> int:
+        if not re.fullmatch(r"\d{1,4}", v) or not lo <= int(v) <= hi:
+            raise argparse.ArgumentTypeError(f"must be {lo}-{hi}")
+        return int(v)
+    return f
+
+
 def proj_arg(s: str) -> str:
     s = s.upper()
     if s not in ALLOWED:
@@ -244,14 +252,14 @@ def main() -> int:
     s.add_argument("--all", action="store_true", help="include done and cancelled")
     s.add_argument("--state")
     s.add_argument("--updated-since")
-    s.add_argument("--limit", type=int, default=50, choices=range(1, 201), metavar="1-200")
+    s.add_argument("--limit", type=rng(1, 200), default=50, metavar="1-200")
     s = sub.add_parser("issue")
     s.add_argument("key")
-    s.add_argument("--comments", type=int, default=5, choices=range(0, 21), metavar="0-20")
+    s.add_argument("--comments", type=rng(0, 20), default=5, metavar="0-20")
     s = sub.add_parser("recent")
     s.add_argument("--since", required=True)
     s.add_argument("--project")
-    s.add_argument("--limit", type=int, default=30, choices=range(1, 101), metavar="1-100")
+    s.add_argument("--limit", type=rng(1, 100), default=30, metavar="1-100")
 
     argv = sys.argv[1:]
     try:
