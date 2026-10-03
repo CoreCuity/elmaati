@@ -1,7 +1,7 @@
 ---
 name: fleet-brief
-description: "Write the founders' 08:00 daily brief for #briefing from the facts block the brief job hands you: per client what stands, what is blocked and on whom, what is due, what changed, plus Sentinel alerts. Used by the scheduled brief job; also when a founder asks for 'the brief' now."
-version: 1.0.0
+description: "Write the founders' 08:00 daily brief for #briefing from the facts block the brief job hands you: in plain words, what needs a founder today and how each client is doing. Used by the scheduled brief job; also when a founder asks for 'the brief' now."
+version: 2.0.0
 author: CoreCuity
 license: proprietary
 platforms: [linux]
@@ -13,75 +13,85 @@ metadata:
 
 # fleet-brief — the 08:00 brief
 
-**The goal:** a founder reads it in under two minutes and does not need to
-ask "where do we stand with X?" today.
+**The goal:** a founder reads it in **one minute**, on a phone, half awake, and
+knows what to do today. If they have to decode a word, the brief failed.
 
 ## Material
 
 The scheduled job runs a facts script first; its output (starting
 `# Facts for the brief`) is in your prompt. **Write only from that block.**
 Do not call tools, do not add what you remember, do not guess. If a source
-says UNAVAILABLE, the brief says so in its first line.
+says UNAVAILABLE, say so plainly in the first line ("I could not read Plane
+this morning").
 
 When a founder asks for the brief outside the job, get the same facts with
 `terminal(command="python3 ~/.hermes/scripts/fleet-brief-facts.py", timeout=300)`.
 
-## Shape (Discord markdown, ≤ 2,500 characters)
+## The facts are raw; you translate them
+
+The facts block is written for you, not for the founders. It is full of
+ticket codes, board states and system words. **None of that goes into the
+brief as is.** Turn each item into what a person would say out loud.
+
+| Facts say | Brief says |
+|---|---|
+| `ODAE-71 … (In Progress; due 2026-09-24) OVERDUE` | "The Odae clearance campaign is still marked as running; it ended around 24 Sep. Close it or say what's left." |
+| `ADOL-399 Meta for WooCommerce connect blocked — partner access insufficient` | "Connecting Adolia's shop to Meta is stuck on access rights — Massine's (since 8 Jul)." |
+| `waiting · On Houda: the real delivery cost per order` | "Still waiting on Houda for Odae's delivery cost (asked 14 Sep)." |
+| Sentinel "All clear — 42 targets watched" | "Servers and sites: all fine." |
+
+## Shape (≤ 1,200 characters)
 
 ```
-## 🌅 Brief · Sat 3 Oct
-<one line: the single thing that most needs a founder today — or "Nothing needs you this morning.">
+**Good morning — Sat 3 Oct**
 
-**🛰️ Systems** — <"all clear, 42 watched" or each open problem in a few words>
+**Needs you today**
+1. <who> — <one plain action, one line>
+2. …
+3. …
 
-**Adolia** — <one line: where it stands>
-• Blocked: <KEY what — on whom, since when>
-• Due: <KEY what — date>
-• Waiting on client: <what — since when>
-• Changed: <KEY what moved>
-
+**Adolia** — <one or two plain sentences: how it's going, what we're waiting on>
 **Odae** — …
 **Désirs d'Orient** — …
 
-**Internal** — <only what is blocked, due this week, or changed; one line each>
+**Servers and sites** — <"all fine" or the problem in plain words>
+**Our own work** — <one sentence, only if something moved or is stuck>
 
-<shadow footer, see below>
+_Trial day N of 5 — reply with anything unclear or wrong._
 ```
 
 ## Rules
 
-1. **Lead with what needs a founder.** The first line after the title is the
-   one action that matters most today. Never a greeting.
-2. **Every item carries its key and a date** — `ADOL-399 (since 8 Jul)`,
-   `ODAE-71 (due 24 Sep, overdue)`. A founder must be able to open it.
-3. **Say on whom.** Blocked and waiting items name who must act: a founder by
-   first name, the client contact by role and first name, or "CoreCuity".
-4. **Omit empty lines.** No "Blocked: none". A client with nothing blocked,
-   due or changed gets one line: "<Client> — quiet; nothing due."
-5. **Old noise is one line, not a list.** "Long overdue" items and "untouched
-   14+ days" items are summarised: "CORE: 10 items overdue since May — board
-   needs a cleanup". Name a stale item only if it is client-facing work.
-6. **Systems:** if Sentinel is all clear, one line. Pending updates and
-   reboots are not problems — do not list them.
-7. **Vault waiting items are dated history.** Mention one only if nothing in
-   Plane covers it, and give its date: "(noted 24 Sep)".
-8. **No money, no customer data, no secrets, no server paths.** Client
-   contacts by role and first name only.
-9. **Never invent progress or impact.** If the facts do not show it, it did
-   not happen. Do not say an item "blocks" or "delays" something unless the
-   facts say so; an overdue item may simply not have been closed — write
-   "overdue, still open on the board".
-10. **Internal is three bullets at most**, one per board, blocked and due
-    first. Changes are a count ("CORE: 8 items moved since 2 Oct"), never a
-    list of keys.
-11. Under 2,500 characters. Cut detail before cutting a client.
+1. **Plain words only.** Write it the way you'd say it to a friend on the
+   phone. No ticket codes in sentences, no board words ("backlog", "in
+   review", "stale", "board", "overdue items"), no tool or system names
+   (Plane, Sentinel, CTWA, MCP, POS, Odoo module names), no abbreviations
+   (MAD, SOW, LP, DNS) — say "dirhams", "the quote", "the landing page",
+   "the domain". People by first name.
+2. **"Needs you today": at most 3**, most important first, each one line,
+   starting with the founder's first name (Najlaa / Massine / both). An item
+   belongs here only if a founder can act on it today. If nothing does, write
+   "Nothing needs you this morning." and skip the list.
+3. **One or two sentences per client.** How it's going, then what we're
+   waiting on and from whom, with the date we asked. Nothing changed and
+   nothing waiting → "Quiet."
+4. **Leave out old clutter.** Anything not touched in over a month that
+   nobody is waiting on is not news — leave it out. If a client's to-do list
+   is badly out of date, say it once at the end: "Tidy-up: Odae's to-do list
+   still shows finished work as open."
+5. **Dates as people say them:** "since 24 Sep", "by Monday". No ISO dates.
+6. **Servers and sites:** one short line. Pending updates and reboots are not
+   news.
+7. **Never invent.** Not progress, not impact, not reasons. If the facts only
+   say it's overdue, write that it's "still marked open", not that it
+   "blocks" anything.
+8. No money, no customer data, no secrets, no server names or paths.
+9. **Ticket codes:** only in "Needs you today", only in brackets at the very
+   end of the line, so a founder can find it: `… (ODAE-71)`.
+10. Under 1,200 characters. Shorter is better.
 
-## Shadow footer
+## Trial footer
 
-While the facts block says `SHADOW: day N of 5`, end with:
-
-```
-_Shadow day N/5 — reply here with anything wrong or missing. A founder judges each brief: "enough to not ask" or not._
-```
-
+While the facts block says `SHADOW: day N of 5`, end with
+`_Trial day N of 5 — reply with anything unclear or wrong._`
 With `SHADOW: off`, no footer.
