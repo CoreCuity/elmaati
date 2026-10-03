@@ -139,6 +139,8 @@ def main() -> None:
                   f"mention it only if Sentinel above shows a problem with its site.\n")
             continue
         print(f"## Client: {name} (Plane {key})")
+        if paused != "active":
+            print(f"Status on the founder-approved card: {paused}.")
         print("\n".join(plane_facts(key, changed.get(key, []))))
         print("\n".join(vault_facts(folder)))
         print()
