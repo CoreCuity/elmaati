@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""fleet-plane-read — the fleet's read-only view of Plane (fleet-v1 §8, Najlaa 2026-10-03).
+
+Runs as the system user `fleetplane`, the only holder of the fleet's Plane token
+(/etc/fleet-plane/token). svc-hermes reaches it through /usr/local/bin/fleet-plane
+and one sudo rule; it never sees the token.
+
+Guardrails in code, not in a prompt:
+  - GET only: there is no other HTTP method in this file.
+  - Six projects only (ALLOWED). Plane enforces the same through the fleet's memberships.
+  - Strict arguments; output is JSON, trimmed, without emails.
+  - Every call is logged to journald (tag fleet-plane).
+
+  fleet-plane projects
+  fleet-plane issues PROJ [--all] [--state=NAME] [--updated-since=YYYY-MM-DD] [--limit=N]
+  fleet-plane issue PROJ-N [--comments=N]
+  fleet-plane recent --since=YYYY-MM-DD [--project=PROJ] [--limit=N]
+
+Exit codes: 0 ok · 4 refused (bad input, project not allowed) · 5 Plane did not answer.
+"""
+import argparse
+import datetime as dt
+import html
+import json
+import os
+import re
+import sys
+import syslog
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+BASE = "https://plane.corecuity.com/api/v1/workspaces/workspace"
+TOKEN_FILE = "/etc/fleet-plane/token"
+ALLOWED = ("ADOL", "ODAE", "DD", "AHQ", "CORE", "OPS")
+MAX_OUT = 60_000
+TIMEOUT = 20
+
+
+class Refused(Exception):
+    pass
+
+
+class PlaneDown(Exception):
+    pass
+
+
+def log(msg: str) -> None:
+    syslog.openlog("fleet-plane", 0, syslog.LOG_AUTH)
+    syslog.syslog(syslog.LOG_INFO, f"caller={os.environ.get('SUDO_USER', '?')} {msg}")
+
+
+def token() -> str:
+    try:
+        return open(TOKEN_FILE).read().strip()
+    except OSError as e:
+        raise PlaneDown(f"token unreadable: {e.strerror}")
+
+
+def get(path: str, params: dict | None = None) -> dict:
+    url = f"{BASE}{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"X-API-Key": token(), "User-Agent": "fleet-plane/1"})
+    for attempt in (1, 2):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt == 1:
+                reset = int(e.headers.get("X-RateLimit-Reset", "0") or 0)
+                time.sleep(max(1, min(30, reset - int(time.time()) + 1)))
+                continue
+            if e.code in (403, 404):
+                raise Refused(f"Plane says {e.code}: not visible to the fleet")
+            raise PlaneDown(f"Plane HTTP {e.code}")
+        except (urllib.error.URLError, TimeoutError) as e:
+            raise PlaneDown(f"Plane unreachable: {getattr(e, 'reason', e)}")
+    raise PlaneDown("Plane rate limit")
+
+
+def results(d) -> list:
+    return d if isinstance(d, list) else d.get("results", [])
+
+
+def text(h: str | None, limit: int) -> str:
+    t = re.sub(r"<br\s*/?>|</p>|</li>", "\n", h or "", flags=re.I)
+    t = html.unescape(re.sub(r"<[^>]+>", "", t))
+    t = re.sub(r"\n{3,}", "\n\n", t).strip()
+    return t if len(t) <= limit else t[:limit] + " …[cut]"
+
+
+def day(s: str) -> str:
+    try:
+        dt.date.fromisoformat(s)
+    except ValueError:
+        raise Refused(f"not a date (YYYY-MM-DD): {s!r}")
+    return s
+
+
+def proj_arg(s: str) -> str:
+    s = s.upper()
+    if s not in ALLOWED:
+        raise Refused(f"project {s!r} is not one the fleet may read ({', '.join(ALLOWED)})")
+    return s
+
+
+class Project:
+    _all: dict | None = None
+
+    @classmethod
+    def all(cls) -> dict:
+        if cls._all is None:
+            cls._all = {p["identifier"]: p for p in results(get("/projects/")) if p["identifier"] in ALLOWED}
+        return cls._all
+
+    def __init__(self, ident: str):
+        p = self.all().get(ident)
+        if not p:
+            raise Refused(f"project {ident} is not visible to the fleet")
+        self.ident, self.id, self.name = ident, p["id"], p["name"]
+        self._states = self._people = self._labels = None
+
+    def states(self) -> dict:
+        if self._states is None:
+            self._states = {s["id"]: (s["name"], s["group"]) for s in results(get(f"/projects/{self.id}/states/"))}
+        return self._states
+
+    def people(self) -> dict:
+        if self._people is None:
+            self._people = {m["id"]: m.get("display_name") or m.get("first_name") or "?"
+                            for m in results(get(f"/projects/{self.id}/members/"))}
+        return self._people
+
+    def labels(self) -> dict:
+        if self._labels is None:
+            self._labels = {l["id"]: l["name"] for l in results(get(f"/projects/{self.id}/labels/", {"per_page": 100}))}
+        return self._labels
+
+    def row(self, i: dict) -> dict:
+        state, group = self.states().get(i.get("state"), ("?", "?"))
+        return {
+            "key": f"{self.ident}-{i['sequence_id']}",
+            "name": i["name"],
+            "state": state,
+            "state_group": group,
+            "priority": i.get("priority"),
+            "assignees": [self.people().get(a, "?") for a in i.get("assignees") or []],
+            "labels": [self.labels().get(l, "?") for l in i.get("labels") or []],
+            "start_date": i.get("start_date"),
+            "due": i.get("target_date"),
+            "created": (i.get("created_at") or "")[:10],
+            "updated": (i.get("updated_at") or "")[:16].replace("T", " "),
+            "completed": (i.get("completed_at") or "")[:10] or None,
+        }
+
+
+def is_open(r: dict) -> bool:
+    # "Blocked" sits in Plane's cancelled group on some boards; it is still open work.
+    return r["state_group"] in ("backlog", "unstarted", "started") or "block" in r["state"].lower()
+
+
+def walk(p: Project, since: str | None, limit: int):
+    cursor, n = None, 0
+    while True:
+        q = {"per_page": 100, "order_by": "-updated_at"}
+        if cursor:
+            q["cursor"] = cursor
+        d = get(f"/projects/{p.id}/issues/", q)
+        for i in results(d):
+            if since and (i.get("updated_at") or "")[:10] < since:
+                return
+            if i.get("archived_at") or i.get("is_draft"):
+                continue
+            yield p.row(i)
+            n += 1
+            if n >= limit * 4:  # hard stop on a runaway board
+                return
+        if not d.get("next_page_results"):
+            return
+        cursor = d.get("next_cursor")
+
+
+def cmd_projects(a) -> dict:
+    return {"projects": [{"key": k, "name": v["name"]} for k, v in sorted(Project.all().items())]}
+
+
+def cmd_issues(a) -> dict:
+    p = Project(proj_arg(a.project))
+    since = day(a.updated_since) if a.updated_since else None
+    rows = []
+    for r in walk(p, since, a.limit):
+        if not a.all and not is_open(r):
+            continue
+        if a.state and r["state"].lower() != a.state.lower():
+            continue
+        rows.append(r)
+        if len(rows) >= a.limit:
+            break
+    return {"project": p.ident, "filter": "all" if a.all else "open", "count": len(rows), "issues": rows}
+
+
+def cmd_issue(a) -> dict:
+    m = re.fullmatch(r"([A-Za-z]+)-(\d{1,6})", a.key)
+    if not m:
+        raise Refused(f"not an issue key (PROJ-N): {a.key!r}")
+    p = Project(proj_arg(m.group(1)))
+    i = get(f"/issues/{p.ident}-{int(m.group(2))}/")
+    if i.get("project") != p.id:
+        raise Refused("issue is not in that project")
+    out = p.row(i)
+    out["description"] = text(i.get("description_html"), 3000)
+    cs = results(get(f"/projects/{p.id}/issues/{i['id']}/comments/", {"per_page": 100}))
+    cs.sort(key=lambda c: c.get("created_at") or "")
+    out["comments_total"] = len(cs)
+    out["comments"] = [{"by": p.people().get(c.get("actor") or c.get("created_by"), "?"),
+                        "at": (c.get("created_at") or "")[:16].replace("T", " "),
+                        "text": text(c.get("comment_html"), 1500)} for c in cs[-a.comments:]] if a.comments else []
+    return out
+
+
+def cmd_recent(a) -> dict:
+    since = day(a.since)
+    keys = [proj_arg(a.project)] if a.project else list(ALLOWED)
+    by = {}
+    for k in keys:
+        try:
+            p = Project(k)
+        except Refused:
+            continue
+        rows = list(walk(p, since, a.limit))[: a.limit]
+        if rows:
+            by[k] = rows
+    return {"since": since, "count": sum(len(v) for v in by.values()), "projects": by}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="fleet-plane", description="Read-only Plane for the fleet.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("projects")
+    s = sub.add_parser("issues")
+    s.add_argument("project")
+    s.add_argument("--all", action="store_true", help="include done and cancelled")
+    s.add_argument("--state")
+    s.add_argument("--updated-since")
+    s.add_argument("--limit", type=int, default=50, choices=range(1, 201), metavar="1-200")
+    s = sub.add_parser("issue")
+    s.add_argument("key")
+    s.add_argument("--comments", type=int, default=5, choices=range(0, 21), metavar="0-20")
+    s = sub.add_parser("recent")
+    s.add_argument("--since", required=True)
+    s.add_argument("--project")
+    s.add_argument("--limit", type=int, default=30, choices=range(1, 101), metavar="1-100")
+
+    argv = sys.argv[1:]
+    try:
+        a = ap.parse_args(argv)
+    except SystemExit as e:
+        if e.code == 0:
+            return 0
+        print(json.dumps({"ok": False, "exit_code": 4, "error": "bad arguments; see fleet-plane --help"}))
+        log(f"refused args={argv!r}")
+        return 4
+    try:
+        out = {"ok": True, **{"projects": cmd_projects, "issues": cmd_issues, "issue": cmd_issue,
+                              "recent": cmd_recent}[a.cmd](a)}
+        code = 0
+    except Refused as e:
+        out, code = {"ok": False, "exit_code": 4, "error": str(e)}, 4
+    except PlaneDown as e:
+        out, code = {"ok": False, "exit_code": 5, "error": str(e)}, 5
+    s = json.dumps(out, ensure_ascii=False)
+    if len(s) > MAX_OUT:
+        s = json.dumps({"ok": False, "exit_code": 4,
+                        "error": f"answer too large ({len(s)} chars): narrow it with --limit or --updated-since"})
+        code = 4
+    print(s)
+    log(f"cmd={a.cmd} args={argv!r} exit={code} bytes={len(s)}")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -86,7 +86,7 @@ revoke() {
   local q; q="${QUAR}/$(date -u +%Y%m%dT%H%M%SZ)"
   install -d -m0700 "$QUAR" "$q"
   local f
-  for f in "${HH}/.env:hermes.env" "${HH}/auth.json:auth.json" "${H}/.ssh/fleet_ed25519:fleet_ed25519"; do
+  for f in "${HH}/.env:hermes.env" "${HH}/auth.json:auth.json" "${H}/.ssh/fleet_ed25519:fleet_ed25519" "/etc/fleet-plane/token:fleet-plane.token"; do
     [ -f "${f%%:*}" ] && mv "${f%%:*}" "${q}/${f##*:}" && log "quarantined ${f%%:*}"
   done
   for f in "${HH}"/profiles/*/.env "${HH}"/profiles/*/auth.json; do

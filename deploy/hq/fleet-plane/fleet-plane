@@ -1,0 +1,4 @@
+#!/bin/sh
+# fleet-plane — what the fleet runs to read Plane. It holds nothing: it hands the call to
+# fleet-plane-read as the user `fleetplane`, the only holder of the token. See fleet-plane-read.
+exec sudo -n -u fleetplane /usr/local/libexec/fleet-plane-read "$@"
