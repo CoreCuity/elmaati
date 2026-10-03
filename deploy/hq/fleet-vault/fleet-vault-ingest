@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""fleet-vault-ingest — root side of the fleet's vault. Started by fleet-vault-ingest.path whenever
+svc-hermes drops a request in the inbox (see fleet-note).
+
+For each request: the file must belong to svc-hermes and be small; the entry must pass
+fleet_vault.validate (known client, known kind, a source, no money / contact detail / secret /
+other client's name); not a repeat of an entry stored in the last 24 h; under the daily limit.
+Then it is appended to the month's journal with the time stamped here, not by the agent.
+Every request gets a receipt in .results/ and is removed from the inbox, stored or not.
+"""
+import json
+import os
+import pwd
+import stat
+import sys
+import time
+
+sys.path.insert(0, "/usr/local/lib/fleet-vault")
+import fleet_vault as fv   # noqa: E402
+
+AGENT = "svc-hermes"
+RESULT_KEEP_S = 3 * 86400
+
+
+def main():
+    agent = pwd.getpwnam(AGENT)
+    os.makedirs(fv.OUTBOX, mode=0o750, exist_ok=True)
+    os.chown(fv.OUTBOX, 0, agent.pw_gid)
+    state = fv.load_state()
+    today = fv.now().strftime("%Y-%m-%d")
+    if state.get("day") != today:
+        state = {"day": today, "count": 0, "recent": state.get("recent", {})}
+    state["recent"] = {h: t for h, t in state.get("recent", {}).items() if time.time() - t < 86400}
+
+    try:
+        names = sorted(n for n in os.listdir(fv.INBOX) if n.endswith(".json"))
+    except OSError:
+        names = []
+    for name in names:
+        path, note_id = os.path.join(fv.INBOX, name), name[:-5]
+        result = {"ok": False}
+        try:
+            # The inbox belongs to the agent: open without following links and judge the opened file,
+            # so a request cannot be swapped for a link to something only root can read.
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as fh:
+                st = os.fstat(fh.fileno())
+                raw = fh.read(fv.REQUEST_MAX_BYTES + 1) if stat.S_ISREG(st.st_mode) else b""
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != agent.pw_uid:
+                result["error"] = "request file is not a plain file owned by the fleet user"
+            elif len(raw) > fv.REQUEST_MAX_BYTES:
+                result["error"] = "request too large"
+            elif not fv.NOTE_ID_RE.match(note_id):
+                result["error"] = "bad request name"
+            else:
+                entry, why = fv.validate(json.loads(raw.decode("utf-8")))
+                if why:
+                    result["error"] = why
+                elif state["count"] >= fv.MAX_PER_DAY:
+                    result["error"] = f"daily limit reached ({fv.MAX_PER_DAY} entries). Keep the rest for tomorrow's first note."
+                elif fv.text_hash(entry) in state["recent"]:
+                    result["error"] = "this exact entry was already stored in the last 24 hours"
+                else:
+                    when = fv.now()
+                    jpath = fv.journal_path(entry["client"], when)
+                    os.makedirs(os.path.dirname(jpath), mode=0o750, exist_ok=True)
+                    os.chown(os.path.dirname(jpath), 0, agent.pw_gid)
+                    new = not os.path.exists(jpath)
+                    with open(jpath, "a", encoding="utf-8") as f:
+                        if new:
+                            f.write(fv.month_header(entry["client"], when))
+                        f.write(fv.render(entry, when, note_id))
+                    os.chown(jpath, 0, agent.pw_gid)
+                    os.chmod(jpath, 0o640)
+                    state["count"] += 1
+                    state["recent"][fv.text_hash(entry)] = time.time()
+                    result = {"ok": True, "file": os.path.relpath(jpath, fv.VAULT),
+                              "stored": when.strftime("%Y-%m-%d %H:%M")}
+        except OSError:          # a link, a directory, a vanished file
+            result = {"ok": False, "error": "request could not be read as a plain file"}
+        except Exception as e:   # a broken request must never stop the queue
+            result = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}
+        if fv.NOTE_ID_RE.match(note_id):   # the receipt name comes from the request name — only a well-formed one
+            rpath = os.path.join(fv.OUTBOX, f"{note_id}.json")
+            with open(rpath, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False)
+            os.chown(rpath, 0, agent.pw_gid)
+            os.chmod(rpath, 0o640)
+        try:
+            os.unlink(path)     # always: a request left behind would re-trigger the path unit forever
+        except OSError:
+            os.rename(path, path + ".stuck")
+        print(f"{note_id}: {'stored → ' + result['file'] if result['ok'] else 'refused — ' + result['error']}")
+
+    with open(fv.STATE + ".tmp", "w") as f:
+        json.dump(state, f)
+    os.replace(fv.STATE + ".tmp", fv.STATE)
+    for n in os.listdir(fv.OUTBOX):   # receipts are for the caller's next few seconds, not an archive
+        p = os.path.join(fv.OUTBOX, n)
+        if time.time() - os.lstat(p).st_mtime > RESULT_KEEP_S:
+            os.unlink(p)
+
+
+if __name__ == "__main__":
+    if os.geteuid() != 0:
+        sys.exit("run as root (it is started by fleet-vault-ingest.path)")
+    main()

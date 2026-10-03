@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""fleet-note — the only way the fleet adds to its vault (fleet-v1 §5). Runs as svc-hermes.
+
+    fleet-note --client=adolia --kind=event --source=receipt:call_8f2a --text='Daily audit ran; no anomaly.'
+    fleet-note --client=adolia --kind=decision --source=founder:Najlaa --ref='Discord #approvals' --text='…'
+    fleet-note --client=fleet  --kind=lesson --source=observation --text='…'
+
+It does not write the vault. It drops the request in an inbox; the root service fleet-vault-ingest
+checks it and appends a dated entry to the journal. This prints the receipt (JSON) and exits 0 when
+the entry was stored, 4 when it was refused, 5 when the ingest service did not answer.
+"""
+import json
+import os
+import secrets
+import sys
+import time
+
+sys.path.insert(0, "/usr/local/lib/fleet-vault")
+import fleet_vault as fv   # noqa: E402
+
+WAIT_S = 12
+
+
+def out(ok, code, **more):
+    print(json.dumps({"kind": "note", "ok": ok, "exit_code": code, **more}, ensure_ascii=False, indent=2))
+    sys.exit(code)
+
+
+def main():
+    req = {}
+    for a in sys.argv[1:]:
+        if a in ("-h", "--help"):
+            print(__doc__)
+            print("kinds:  ", ", ".join(fv.KINDS))
+            print("clients:", ", ".join(fv.clients() + ["fleet"]))
+            sys.exit(0)
+        key, eq, val = a.partition("=")
+        if not eq or key not in ("--client", "--kind", "--source", "--text", "--ref"):
+            out(False, 4, error=f"option not allowed: {key}. Allowed (--opt=value form): --client --kind --source --text --ref")
+        req[key[2:]] = val
+    entry, why = fv.validate(req)
+    if why:
+        out(False, 4, error=why)
+
+    note_id = "n-" + fv.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(2)
+    os.makedirs(fv.INBOX, mode=0o700, exist_ok=True)
+    tmp, final = os.path.join(fv.INBOX, f".{note_id}.tmp"), os.path.join(fv.INBOX, f"{note_id}.json")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(entry, f, ensure_ascii=False)
+    os.replace(tmp, final)   # the ingest path unit fires on *.json only — never on a half-written file
+
+    result = os.path.join(fv.OUTBOX, f"{note_id}.json")
+    deadline = time.time() + WAIT_S
+    while time.time() < deadline:
+        try:
+            r = json.load(open(result))
+        except (OSError, ValueError):
+            time.sleep(0.4)
+            continue
+        if r.get("ok"):
+            out(True, 0, id=note_id, file=r.get("file"), stored=r.get("stored"))
+        out(False, 4, id=note_id, error=r.get("error", "refused"))
+    out(False, 5, id=note_id, error="the vault did not answer in time. The note is queued, not lost: do not send it again; "
+                                    "tell the founders the fleet-vault-ingest service needs a look.")
+
+
+if __name__ == "__main__":
+    main()
