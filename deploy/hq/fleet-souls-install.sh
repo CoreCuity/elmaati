@@ -30,7 +30,7 @@ done
 
 say "2/3 skills (root-owned, default profile)"
 # Category each repo skill is installed under.
-declare -A CAT=( [fleet-task]=autonomous-ai-agents [fleet-health]=operations [fleet-vault]=operations [fleet-plane]=operations )
+declare -A CAT=( [fleet-task]=autonomous-ai-agents [fleet-health]=operations [fleet-vault]=operations [fleet-plane]=operations [fleet-brief]=operations )
 for d in "${SRC}"/deploy/hq/skills/*/; do
   name="$(basename "$d")"
   [ -n "${CAT[$name]:-}" ] || { echo "✗ skill ${name} has no category in CAT" >&2; exit 1; }
