@@ -90,6 +90,12 @@ def plane_facts(key: str, changed: list[dict]) -> list[str]:
     return out
 
 
+def engagement(folder: str) -> str:
+    card = VAULT / "clients" / folder / "card.md"
+    m = re.search(r"^engagement:\s*(.+)$", card.read_text(), re.M) if card.exists() else None
+    return m.group(1).strip() if m else "active"
+
+
 def vault_facts(folder: str) -> list[str]:
     out = []
     tl = VAULT / "clients" / folder / "timeline.md"
@@ -126,6 +132,12 @@ def main() -> None:
         print(f"Plane recent changes: UNAVAILABLE — {rec.get('error')}\n")
 
     for key, folder, name in CLIENTS:
+        paused = engagement(folder)
+        if paused.startswith("paused"):
+            # The founder-approved card is the switch: a paused client gets one line, no board read.
+            print(f"## Client: {name} — {paused.upper()} (founder decision on the card). No active work; "
+                  f"mention it only if Sentinel above shows a problem with its site.\n")
+            continue
         print(f"## Client: {name} (Plane {key})")
         print("\n".join(plane_facts(key, changed.get(key, []))))
         print("\n".join(vault_facts(folder)))

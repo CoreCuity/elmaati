@@ -88,7 +88,9 @@ _Trial day N of 5 — reply with anything unclear or wrong._
 8. No money, no customer data, no secrets, no server names or paths.
 9. **Ticket codes:** only in "Needs you today", only in brackets at the very
    end of the line, so a founder can find it: `… (ODAE-71)`.
-10. Under 1,200 characters. Shorter is better.
+10. **A paused client** (the facts say PAUSED) gets one line: "Odae — paused
+    since 3 Oct." Never in "Needs you today", unless its site is down.
+11. Under 1,200 characters. Shorter is better.
 
 ## Trial footer
 
