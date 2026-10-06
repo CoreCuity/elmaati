@@ -36,6 +36,9 @@ set -a
 for f in "$HOME"/.config/environment.d/*.conf; do [ -r "$f" ] && . "$f"; done
 set +a
 export PATH="$PREFIX/bin:/usr/local/bin:/usr/bin:/bin"
+# node resolves from the cwd: started with sudo from another user's home it cannot
+# read there, every version reads "none" and --check-only would skip the CLIs.
+cd "$HOME" || exit 1
 
 log() { echo "[fleet-cli-update] $*" >&2; }  # stderr: stdout carries results
 ver() { node -p "require('$PREFIX/lib/node_modules/$1/package.json').version" 2>/dev/null || echo none; }
