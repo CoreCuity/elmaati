@@ -27,7 +27,7 @@ as_u mkdir -p "$UD"
 cat > "${UD}/fleet-cli-update.service" <<'EOF'
 # Managed by core/elmaati/deploy/hq/fleet-cli-update-install.sh
 [Unit]
-Description=Weekly self-checking update of the fleet CLI seats (claude, codex)
+Description=Weekly self-checking update of the fleet CLI seats (claude, codex, opencode)
 [Service]
 Type=oneshot
 ExecStart=%h/.local/bin/fleet-cli-update

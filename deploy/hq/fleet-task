@@ -10,6 +10,9 @@
 #   - target must be an existing client folder under /home/svc-hermes/work
 #     (one folder per client = one MCP registry per client, design rule #6)
 #   - fixed budget: one run at a time, 20 per rolling hour, 15 min queue
+#   - --chain may name only the CLIs the fleet holds a seat for: claude, codex,
+#     antigravity (agy), opencode. Without --chain the router's default applies
+#     (claude, then codex); the other two run only when named.
 #   - no extra tool grants, no budget flags, no mocks
 # Everything else (fallback, receipts, cooldowns) is `ai-router task`.
 #
@@ -39,7 +42,17 @@ for a in "$@"; do
       t="${a#--timeout-ms=}"
       [[ "$t" =~ ^[0-9]+$ ]] && [ "$t" -le "$MAX_TIMEOUT_MS" ] || deny "fleet-task: --timeout-ms must be a number ≤ ${MAX_TIMEOUT_MS} (30 min)"
       ;;
-    --prompt=*|--prompt-file=*|--context-id=*|--requested-by=*|--quality=*|--chain=*|--dry-run|--access=read) ;;
+    --chain=*)
+      IFS=, read -ra chain <<< "${a#--chain=}"
+      [ "${#chain[@]}" -gt 0 ] || deny "fleet-task: --chain is empty"
+      for item in "${chain[@]}"; do
+        case "${item%%:*}" in
+          claude|codex|antigravity|agy|opencode) ;;
+          *) deny "fleet-task: --chain may name only claude, codex, antigravity (agy) or opencode, comma separated, no spaces (got '${item%%:*}')" ;;
+        esac
+      done
+      ;;
+    --prompt=*|--prompt-file=*|--context-id=*|--requested-by=*|--quality=*|--dry-run|--access=read) ;;
     --access=*)
       deny "fleet v1: delegated CLI runs are read-only. Code and config changes stay in founder sessions (Builder is phase 4). Hand the founders a task pack instead."
       ;;
