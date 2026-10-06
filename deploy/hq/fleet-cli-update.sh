@@ -69,8 +69,9 @@ wait_for_idle() {
 # check <provider> → prints "ok" or a one-line cause; never exits the script.
 check() {
   local p="$1" chain="$1" r cause
-  # OpenCode's cheapest free model does not answer reliably; prove it on std.
-  [ "$p" = opencode ] && chain=opencode:std
+  # OpenCode's cheapest free model does not answer reliably; prove it on the
+  # std one. A chain item takes a model id, not a tier name.
+  [ "$p" = opencode ] && chain=opencode:opencode/big-pickle
   rm -rf "$CHECK_DIR"; mkdir -p "$CHECK_DIR"
   r="$(ai-router task --target="$CHECK_DIR" --chain="$chain" --quality=low --access=read \
         --consumer=fleet-cli-update --timeout-ms=180000 \

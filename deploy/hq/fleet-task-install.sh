@@ -56,7 +56,7 @@ chown -R "$U:$U" "${H}/backups/fleet-task-${TS}"
 say "verify"
 sudo -u "$U" -H /usr/local/bin/fleet-task --target="${H}/work/internal" --prompt=x --dry-run \
   | python3 -c 'import json,sys; r=json.load(sys.stdin); print("   dry-run:", "ok" if r["ok"] else r["error"])'
-for good in "--chain=agy" "--chain=claude,opencode:std"; do
+for good in "--chain=agy" "--chain=claude,opencode"; do
   out="$(sudo -u "$U" -H /usr/local/bin/fleet-task --target="${H}/work/internal" --prompt=x --dry-run "$good" || true)"
   echo "$out" | python3 -c 'import json,sys; r=json.load(sys.stdin); print("   accepted '"$good"':", r["ok"])'
 done
