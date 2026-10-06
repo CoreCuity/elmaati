@@ -35,7 +35,7 @@ TZ = zoneinfo.ZoneInfo("Africa/Casablanca")   # founders read times in Moroccan 
 CRIT, WARN = "🔴", "🟠"
 # Order and headings of the groups in a message.
 GROUPS = [("down", "Sites down"), ("shop", "Storefronts"), ("tls", "Certificates"), ("backup", "Backups"),
-          ("host", "Servers"), ("domain", "Domains"), ("expiry", "Expiring credentials")]
+          ("host", "Servers"), ("domain", "Domains"), ("expiry", "Expiring credentials & deprecations")]
 
 
 def problem(sev, group, subject, detail):

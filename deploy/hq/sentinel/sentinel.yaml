@@ -104,9 +104,12 @@ domains:
   - ajihost.ma
   - odoobooking.online     # hosts adolia.odoobooking.online — expires 2026-12-12 (checked 2026-09-28)
 
-# Credentials with a known expiry. Alert at 14, 7, 3 and 1 days out, and after expiry.
+# Items with a known expiry/sunset. Alert at 14, 7, 3 and 1 days out, and after expiry.
 # Only dates verified at the source (debug_token etc.) belong here.
 expiries:
   - name: CoreCuity Meta token (all clients' ad accounts)
     date: 2026-11-27
     action: extend it in the Access Token Debugger, then run clients/Adolia/scripts/swap-meta-token.sh --allow-user on the Mac
+  - name: Gemini 3.6 / 3.7 models deprecation & intro pricing expiry
+    date: 2026-12-31
+    action: prune retired gemini-3.6-* and gemini-3.7-* models from core/ai-router registry.mjs
