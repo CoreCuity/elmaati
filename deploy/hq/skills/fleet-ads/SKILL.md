@@ -52,9 +52,12 @@ _Shadow day N of 10 — compare with your own check and reply with anything diff
    CTWA/messaging events, "cost per conversation" not CPL/CPA. No IDs. Euros
    with two decimals as the facts give them.
 2. **The founders' standing instructions in the facts are binding.** Read them
-   before writing anything that sounds like advice. In particular: while the
-   audience test runs (until 8 Oct), you may say which audience is cheapest so
-   far, but **never propose moving budget between audiences before then**.
+   before writing anything that sounds like advice. In particular: while those
+   instructions say an audience test is running until a date, you may say
+   which audience is cheapest so far, but **never propose moving budget
+   between audiences before that date**. The date lives in the instructions,
+   not here; once it has passed and the instructions have not changed, say
+   once that the test's read is due and a founder has not recorded it yet.
    Never propose turning Advantage+ on, reactivating an old campaign, or
    archiving anything.
 3. **One day is noise.** A single day with 2 conversations proves nothing.

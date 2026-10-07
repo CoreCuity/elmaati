@@ -8,6 +8,13 @@ Sources, all read-only and all already the fleet's:
   Sentinel  python3 /usr/local/lib/sentinel/sentinel-check --digest --dry-run
   Plane     /usr/local/bin/fleet-plane (6 projects, GET only)
   Vault     /var/lib/fleet-vault (founder-approved cards/timelines + the fleet's journal)
+  Meta      /usr/local/bin/fleet-meta (Adolia only, GET only) — counts, never money
+
+Every fact carries its age. A board entry nobody has touched for OLD_DAYS is not news: it is
+counted under "old board entries" and never listed as blocked, late or in progress. An edit to
+a board entry is labelled as an edit — it says nothing about the real system. (2026-10-07: the
+brief had been leading with a July entry for five days and reporting ticket edits as campaign
+changes.)
 
 Installed root-owned by core/elmaati/deploy/hq/fleet-brief/install.sh. Never edit on the box.
 """
@@ -23,11 +30,14 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Africa/Casablanca")
 CLIENTS = [("ADOL", "adolia", "Adolia"), ("ODAE", "odae", "Odae"), ("DD", "desirs", "Désirs d'Orient")]
-INTERNAL = [("AHQ", "Core Agents HQ (the fleet)"), ("CORE", "CoreCuity"), ("OPS", "Agency Ops")]
+INTERNAL = [("AHQ", "Core Agents HQ (the 3D office, not the fleet)"), ("CORE", "CoreCuity (the fleet's own rollout is CORE-22)"), ("OPS", "Agency Ops")]
 VAULT = Path("/var/lib/fleet-vault")
 SHADOW_FIRST, SHADOW_DAYS = dt.date(2026, 10, 3), 5
 STALE_DAYS = 14
 LONG_OVERDUE_DAYS = 30
+OLD_DAYS = 45            # untouched this long = not news
+AGENT_ACCOUNT = "CoreCuity Fleet"   # Plane member the CLI sessions on the founders' Mac also write as
+META_CLIENTS = {"adolia"}
 
 now = dt.datetime.now(TZ)
 today = now.date()
@@ -43,17 +53,24 @@ def run(cmd: list[str], timeout: int = 120) -> tuple[int, str]:
 
 
 def plane(*args: str) -> dict:
-    code, out = run(["/usr/local/bin/fleet-plane", *args])
-    try:
-        return json.loads(out)
-    except ValueError:
-        return {"ok": False, "error": f"no answer (exit {code})"}
+    r: dict = {}
+    for attempt in range(3):
+        code, out = run(["/usr/local/bin/fleet-plane", *args])
+        try:
+            r = json.loads(out)
+        except ValueError:
+            r = {"ok": False, "error": f"no answer (exit {code})"}
+        if r.get("ok") or "429" not in str(r.get("error")):
+            break
+        time.sleep(30)  # Plane allows 60 requests a minute; wait the window out
+    return r
 
 
 def line(i: dict) -> str:
     bits = [i["state"]]
     if i.get("assignees"):
-        bits.append("→ " + ", ".join(i["assignees"]))
+        bits.append("→ " + ", ".join("an agent session (no person assigned)" if a == AGENT_ACCOUNT else a
+                                      for a in i["assignees"]))
     if i.get("due"):
         bits.append(f"due {i['due']}")
     bits.append(f"updated {i['updated'][:10]}")
@@ -64,11 +81,21 @@ def plane_facts(key: str, changed: list[dict]) -> list[str]:
     r = plane("issues", key, "--limit=150")
     if not r.get("ok"):
         return [f"Plane {key}: UNAVAILABLE — {r.get('error')}"]
-    open_ = r["issues"]
-    out = [f"Plane {key}: {len(open_)}{'+' if len(open_) >= 150 else ''} open work items."]
+    every = r["issues"]
+    old_cut = (today - dt.timedelta(days=OLD_DAYS)).isoformat()
+    old_board = sorted((i for i in every if i["updated"][:10] < old_cut), key=lambda i: i["updated"])
+    open_ = [i for i in every if i["updated"][:10] >= old_cut]
+    parked = sum(1 for i in open_ if i["state_group"] == "backlog")
+    out = [f"Plane {key}: {len(open_) - parked}{'+' if len(every) >= 150 else ''} work items open and touched in the last "
+           f"{OLD_DAYS} days" + (f" ({parked} more parked for later — not news)." if parked else ".")]
     blocked = [i for i in open_ if "block" in i["state"].lower()]
-    out.append(f"Blocked ({len(blocked)}):" if blocked else "Blocked: none.")
-    out += [line(i) for i in blocked]
+    out.append(f"Blocked ({len(blocked)}) — the note under each says on whom and since when:" if blocked else "Blocked: none.")
+    for i in blocked[:6]:
+        out.append(line(i))
+        d = plane("issue", i["key"], "--comments=0")
+        why = (d.get("issue") or d).get("description") if d.get("ok") else None
+        if why:
+            out.append(f"    note: {' '.join(str(why).split())[:320]}")
     week = (today + dt.timedelta(days=7)).isoformat()
     month_ago = (today - dt.timedelta(days=LONG_OVERDUE_DAYS)).isoformat()
     due = sorted((i for i in open_ if i.get("due") and month_ago <= i["due"] <= week), key=lambda i: i["due"])
@@ -77,7 +104,7 @@ def plane_facts(key: str, changed: list[dict]) -> list[str]:
     out += [line(i) + (" OVERDUE" if i["due"] < today.isoformat() else "") for i in due]
     old = sorted((i for i in open_ if i.get("due") and i["due"] < month_ago), key=lambda i: i["due"])
     if old:
-        out.append(f"Long overdue (due before {month_ago}): {len(old)} items, oldest due {old[0]['due']} — "
+        out.append(f"Due date passed more than {LONG_OVERDUE_DAYS} days ago but still being worked ({len(old)}): "
                    + ", ".join(i["key"] for i in old[:12]) + (" …" if len(old) > 12 else ""))
     cut = (today - dt.timedelta(days=STALE_DAYS)).isoformat()
     stale = sorted((i for i in open_ if i["updated"][:10] < cut and i["state_group"] == "started"),
@@ -85,8 +112,56 @@ def plane_facts(key: str, changed: list[dict]) -> list[str]:
     out.append(f"In progress but untouched for {STALE_DAYS}+ days ({len(stale)}), oldest first:" if stale
                else f"In progress but untouched for {STALE_DAYS}+ days: none.")
     out += [line(i) for i in stale[:5]]
-    out.append(f"Changed since {since.isoformat()} ({len(changed)}):" if changed else f"Changed since {since.isoformat()}: nothing.")
-    out += [line(i) for i in changed[:10]]
+    out.append(f"Board entries edited since {since.isoformat()} ({len(changed)}) — an edit to the entry, "
+               f"NOT a change to the client's systems, ads or site:" if changed
+               else f"Board entries edited since {since.isoformat()}: none.")
+    if len(changed) > 12:
+        out[-1] = (f"Board entries edited since {since.isoformat()}: {len(changed)} — a bulk tidy-up of the list, "
+                   f"not {len(changed)} pieces of news. Do not list them.")
+    else:
+        out += [line(i) for i in changed]
+    if old_board:
+        out.append(f"Old board entries (open, untouched for {OLD_DAYS}+ days — NOT news, never in 'Needs you'): "
+                   f"{len(old_board)}, oldest last touched {old_board[0]['updated'][:10]}.")
+    return out
+
+
+def ads_facts(folder: str) -> list[str]:
+    """What the ads did yesterday, in counts. Money stays in the 09:00 ads check."""
+    def meta(*args: str) -> dict:
+        code, out = run(["/usr/local/bin/fleet-meta", *args])
+        try:
+            return json.loads(out)
+        except ValueError:
+            return {"ok": False, "error": f"no answer (exit {code})"}
+
+    live = meta("live", folder)
+    if not live.get("ok"):
+        return [f"Ads (Meta): UNAVAILABLE — {live.get('error')}"]
+    on = [s["name"] for s in live["ad_sets"] if s["status"] == "ACTIVE"]
+    if not on:
+        return ["Ads (Meta, read this morning): nothing is delivering."]
+    bad = [a for a in live["ads"] if a["status"] in ("DISAPPROVED", "WITH_ISSUES") or a["issues"]]
+    yday = dt.datetime.now(ZoneInfo("America/Los_Angeles")).date() - dt.timedelta(days=1)  # the account's day
+
+    def convs(a: dt.date, b: dt.date) -> int | None:
+        r = meta("results", folder, "--level=adset", f"--since={a}", f"--until={b}")
+        return sum(x.get("conversations_started", 0) for x in r["rows"] if x["name"] in on) if r.get("ok") else None
+
+    y, w = convs(yday, yday), convs(yday - dt.timedelta(days=6), yday)
+    out = [f"Ads (Meta, read this morning): {len(on)} audiences delivering; "
+           + (f"{len(bad)} ads with a problem." if bad else "no ad has a problem.")]
+    if y is not None and w is not None:
+        out.append(f"WhatsApp conversations started: {y} yesterday ({yday:%a %d %b}), {w} over the last 7 days. "
+                   f"One day is noise; the 09:00 ads check has the detail.")
+    ch = meta("changes", folder, f"--since={yday}")
+    if ch.get("ok"):
+        # Meta's own automatic audiences and its card charges are housekeeping, not somebody's change.
+        rows = [c for c in ch.get("changes", []) if "asa_auto_custom_audience" not in (c.get("object") or "")
+                and c.get("what") != "ad_account_billing_charge"]
+        out.append(f"Changes made in the ad account since {yday:%d %b} ({len(rows)}): "
+                   + "; ".join(f"{c['who']} · {c['what']} · {c['object']}" for c in rows[:4]) if rows
+                   else f"Changes made in the ad account since {yday:%d %b}: none.")
     return out
 
 
@@ -100,9 +175,14 @@ def vault_facts(folder: str) -> list[str]:
     out = []
     tl = VAULT / "clients" / folder / "timeline.md"
     if tl.exists():
-        waiting = [l.strip() for l in tl.read_text().splitlines() if "· waiting ·" in l]
+        text = tl.read_text()
+        m = re.search(r"^approved:.*?(\d{4}-\d{2}-\d{2})", text, re.M)
+        checked = dt.date.fromisoformat(m.group(1)) if m else None
+        waiting = [l.strip() for l in text.splitlines() if "· waiting ·" in l]
         if waiting:
-            out.append("Vault timeline, waiting items (founder-approved, may be dated):")
+            age = f"last checked by a founder {(today - checked).days} days ago, on {checked}" if checked else "date of last check unknown"
+            out.append(f"Waiting items on the founder-approved timeline ({age}; nobody has confirmed since "
+                       f"whether they are still open — say 'as of' that date, do not present them as today's state):")
             out += waiting[:5]
     jdir = VAULT / "clients" / folder / "journal"
     entries = []
@@ -141,10 +221,12 @@ def main() -> None:
         print(f"## Client: {name} (Plane {key})")
         if paused != "active":
             print(f"Status on the founder-approved card: {paused}.")
+        if folder in META_CLIENTS:
+            print("\n".join(ads_facts(folder)))
         print("\n".join(plane_facts(key, changed.get(key, []))))
         print("\n".join(vault_facts(folder)))
         print()
-        time.sleep(2)  # Plane allows 60 requests a minute
+        time.sleep(5)  # Plane allows 60 requests a minute
 
     print("## Internal")
     for key, name in INTERNAL:

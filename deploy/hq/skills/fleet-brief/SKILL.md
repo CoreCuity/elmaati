@@ -1,7 +1,7 @@
 ---
 name: fleet-brief
 description: "Write the founders' 08:00 daily brief for #briefing from the facts block the brief job hands you: in plain words, what needs a founder today and how each client is doing. Used by the scheduled brief job; also when a founder asks for 'the brief' now."
-version: 2.0.0
+version: 3.0.0
 author: CoreCuity
 license: proprietary
 platforms: [linux]
@@ -36,7 +36,10 @@ brief as is.** Turn each item into what a person would say out loud.
 | Facts say | Brief says |
 |---|---|
 | `ODAE-71 … (In Progress; due 2026-09-24) OVERDUE` | "The Odae clearance campaign is still marked as running; it ended around 24 Sep. Close it or say what's left." |
-| `ADOL-399 Meta for WooCommerce connect blocked — partner access insufficient` | "Connecting Adolia's shop to Meta is stuck on access rights — Massine's (since 8 Jul)." |
+| `Board entries edited since … : ADOL-395 Live campaign … (updated 2026-10-05)` | nothing about the campaign. At most: "the Adolia ads task was updated on the list." |
+| `Ads (Meta…): 4 audiences delivering … 4 yesterday, 107 over the last 7 days … Changes: none` | "Ads are running; 107 WhatsApp conversations this week. Nobody changed anything." |
+| `Waiting items … last checked by a founder 12 days ago, on 2026-10-03` | "As of 3 Oct we were waiting on Ismail for the video rights — is that still open?" |
+| `Old board entries (open, untouched for 45+ days …): 51` | nothing, or once at the end: "Tidy-up: Adolia's list still shows 51 old entries as open." |
 | `waiting · On Houda: the real delivery cost per order` | "Still waiting on Houda for Odae's delivery cost (asked 14 Sep)." |
 | Sentinel "All clear — 42 targets watched" | "Servers and sites: all fine." |
 
@@ -72,6 +75,11 @@ _Trial day N of 5 — reply with anything unclear or wrong._
    starting with the founder's first name (Najlaa / Massine / both). An item
    belongs here only if a founder can act on it today. If nothing does, write
    "Nothing needs you this morning." and skip the list.
+   **Never repeat yesterday's ask by habit:** an item qualifies only if the
+   facts list it as blocked, late or due this week — old board entries and
+   dated waiting items never do. A server or site problem that has been open
+   for days belongs under "Servers and sites", with how long it has been open
+   if the facts say so.
 3. **One or two sentences per client.** How it's going, then what we're
    waiting on and from whom, with the date we asked. Nothing changed and
    nothing waiting → "Quiet."
@@ -85,6 +93,19 @@ _Trial day N of 5 — reply with anything unclear or wrong._
 7. **Never invent.** Not progress, not impact, not reasons. If the facts only
    say it's overdue, write that it's "still marked open", not that it
    "blocks" anything.
+   - **An edited board entry is not an event.** "Board entries edited" means
+     somebody changed a line on the to-do list. It never means the campaign,
+     the site, the server or the client changed. What the ads did comes only
+     from the `Ads (Meta…)` lines; what the servers did only from Sentinel.
+   - **A waiting item is as old as its last check.** The facts give that
+     date. Say "as of <date>"; never "still waiting" as if you had checked
+     this morning. Once the last check is more than 14 days old, do not repeat
+     the items: write once, at the end, "Tidy-up: the notes on <client> were
+     last checked on <date>."
+   - **"An agent session" is not a person.** Work assigned to it was created
+     from a founder's own working session. Never address it to anyone and
+     never call it the fleet's work; do not put it in "Needs you today" unless
+     the facts name a person.
 8. No money, no customer data, no secrets, no server names or paths.
 9. **Ticket codes:** only in "Needs you today", only in brackets at the very
    end of the line, so a founder can find it: `… (ODAE-71)`.
