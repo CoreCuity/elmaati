@@ -3,8 +3,8 @@
 # Source of truth: elmaati repo, deploy/clients/caddy/. Never edit on the server — deploy with ./deploy.sh
 # (validate on host → timestamped backup → install → reload). Brought into git 2026-09-29 from the live file.
 # Basic-auth hashes live ONLY on the server in /etc/caddy/auth.caddy (imported below; never committed).
-# REQUIRES Caddy >= 2.7 (trusted_proxies / client_ip_headers). The host still runs Ubuntu's 2.6.2 (2026-09-29):
-# `./deploy.sh --check` fails until Caddy is upgraded — upgrade first, then deploy.
+# REQUIRES Caddy >= 2.7 (trusted_proxies / client_ip_headers). The host runs Caddy from the official apt repo
+# since 2026-10-09 (it had Ubuntu's 2.6.2 before, on which this file does not validate).
 
 # Global options
 {
@@ -84,6 +84,7 @@ www.paradisante.ma {
 
 # --- Plane PM (rootless, added 2026-05-16) ---
 plane.corecuity.com {
+    header X-Robots-Tag "noindex, nofollow, noarchive"
     reverse_proxy localhost:8082
 }
 
@@ -255,3 +256,19 @@ www.youandco.online {
     redir https://youandco.online{uri} permanent
 }
 # -------------------------------------------------------------------------
+
+# --- Désirs d'Orient — REHEARSAL copy of production (neutralised), added 2026-10-09 ---
+# Temporary: remove this block and the desirs.corecuity.com DNS record when the rehearsal copy is wiped
+# (clients/desirs/relocation/RUNBOOK.md phase 3.5).
+desirs.corecuity.com {
+    # The Odoo database manager answers even with list_db = False; never expose it.
+    @dbmgr path /web/database/*
+    respond @dbmgr 403
+    encode zstd gzip
+    header {
+        X-Robots-Tag "noindex, nofollow"
+        X-Frame-Options "SAMEORIGIN"
+        ?X-Content-Type-Options "nosniff"
+    }
+    reverse_proxy 127.0.0.1:8101
+}
