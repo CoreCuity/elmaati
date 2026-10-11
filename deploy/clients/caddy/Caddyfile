@@ -284,3 +284,14 @@ youssef.corecuity.com {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8102
 }
+
+# --- corecuity.com staging (Next.js standalone), added 2026-10-11 ---
+# Tenant `corecuity` (uid 2009): rootless Docker, node on 127.0.0.1:8103, bundle in /srv/clients/corecuity/stage/app.
+# Source: github.com/CoreCuity/website, branch `stage`, shipped by its deploy/stage/deploy.sh.
+# Production corecuity.com stays on Vercel; this host must never be indexed.
+stage.corecuity.com {
+    import security_headers
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8103
+}
