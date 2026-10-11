@@ -272,3 +272,12 @@ desirs.corecuity.com {
     }
     reverse_proxy 127.0.0.1:8101
 }
+
+# --- Youssef Ramchi — portfolio (static Vite build), added 2026-10-11 ---
+# Tenant `youssef` (uid 2008): rootless Docker, nginx on 127.0.0.1:8102, files in /srv/clients/youssef/site.
+# Source: CoreCuity-PM repo, projects/youssef/landing.
+youssef.corecuity.com {
+    import security_headers
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8102
+}
