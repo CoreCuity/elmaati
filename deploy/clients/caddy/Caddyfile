@@ -67,6 +67,9 @@ monitor.corecuity.com {
 
 mail.corecuity.com, mail.paradisante.ma, autoconfig.paradisante.ma, autodiscover.paradisante.ma, autoconfig.ajihost.ma, autodiscover.ajihost.ma {
     reverse_proxy https://localhost:8026 {
+        # Caddy >= 2.11 rewrites Host to the upstream for https:// upstreams; SOGo then builds
+        # its redirects as https://localhost:8026/... Keep the public hostname.
+        header_up Host {host}
         transport http {
             tls_insecure_skip_verify
         }
