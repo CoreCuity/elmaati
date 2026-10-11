@@ -23,7 +23,7 @@
     }
 }
 
-# Basic-auth snippets (auth_netdata, auth_paradisante_stage) — server-only file, see header.
+# Basic-auth snippets (auth_netdata, auth_paradisante_stage, auth_corecuity_stage) — server-only file, see header.
 import auth.caddy
 
 # --- Shared security headers (ODAE-51, 2026-08-03) ------------------------
@@ -288,8 +288,10 @@ youssef.corecuity.com {
 # --- corecuity.com staging (Next.js standalone), added 2026-10-11 ---
 # Tenant `corecuity` (uid 2009): rootless Docker, node on 127.0.0.1:8103, bundle in /srv/clients/corecuity/stage/app.
 # Source: github.com/CoreCuity/website, branch `stage`, shipped by its deploy/stage/deploy.sh.
-# Production corecuity.com stays on Vercel; this host must never be indexed.
+# Production corecuity.com stays on Vercel; this host must never be indexed. Basic auth: user `corecuity`,
+# password in Plane > Creds > "CoreCuity — stage". The snippet was appended to /etc/caddy/auth.caddy by hand.
 stage.corecuity.com {
+    import auth_corecuity_stage
     import security_headers
     header X-Robots-Tag "noindex, nofollow, noarchive"
     encode zstd gzip
