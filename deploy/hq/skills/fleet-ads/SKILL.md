@@ -25,6 +25,14 @@ block.** The script did the arithmetic: copy its numbers, never recompute or
 round differently. Do not call tools. If it says UNAVAILABLE, say so in the
 first line and stop.
 
+**Meta access is CoreCuity's, never a client's.** One CoreCuity token reads
+every client's ads. Never write "Adolia's ads access" or "Adolia's token".
+If the facts say a founder must issue a new token, say that (first line).
+If they say Meta refused the token and it "often clears", write one calm
+line: "Meta refused our access this morning; no action yet." Never tell a
+founder to renew unless the facts say so. A `RECOVERED` line gets one
+sentence: "Meta reads work again since <time>; yesterday's alarm is over."
+
 When a founder asks outside the job, get the same facts with
 `terminal(command="python3 ~/.hermes/scripts/fleet-ads-facts.py", timeout=300)`.
 For a narrower question, `fleet-meta` answers directly (read-only, Adolia only):

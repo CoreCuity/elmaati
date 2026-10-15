@@ -138,9 +138,10 @@ def ads_facts(folder: str) -> list[str]:
     live = meta("live", folder)
     if not live.get("ok"):
         return [f"Ads (Meta): UNAVAILABLE — {live.get('error')}"]
+    back = [f"Ads (Meta) RECOVERED: {live['recovered']}"] if live.get("recovered") else []
     on = [s["name"] for s in live["ad_sets"] if s["status"] == "ACTIVE"]
     if not on:
-        return ["Ads (Meta, read this morning): nothing is delivering."]
+        return back + ["Ads (Meta, read this morning): nothing is delivering."]
     bad = [a for a in live["ads"] if a["status"] in ("DISAPPROVED", "WITH_ISSUES") or a["issues"]]
     yday = dt.datetime.now(ZoneInfo("America/Los_Angeles")).date() - dt.timedelta(days=1)  # the account's day
 
@@ -149,7 +150,7 @@ def ads_facts(folder: str) -> list[str]:
         return sum(x.get("conversations_started", 0) for x in r["rows"] if x["name"] in on) if r.get("ok") else None
 
     y, w = convs(yday, yday), convs(yday - dt.timedelta(days=6), yday)
-    out = [f"Ads (Meta, read this morning): {len(on)} audiences delivering; "
+    out = back + [f"Ads (Meta, read this morning): {len(on)} audiences delivering; "
            + (f"{len(bad)} ads with a problem." if bad else "no ad has a problem.")]
     if y is not None and w is not None:
         out.append(f"WhatsApp conversations started: {y} yesterday ({yday:%a %d %b}), {w} over the last 7 days. "

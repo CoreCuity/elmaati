@@ -24,6 +24,14 @@ Do not call tools, do not add what you remember, do not guess. If a source
 says UNAVAILABLE, say so plainly in the first line ("I could not read Plane
 this morning").
 
+**Meta access is CoreCuity's, never a client's.** One CoreCuity token reads
+every client's ads. Never write "Adolia's ads access" or "Adolia's token".
+If the facts say a founder must issue a new token, say that (first line).
+If they say Meta refused the token and it "often clears", write one calm
+line: "Meta refused our access this morning; no action yet." Never tell a
+founder to renew unless the facts say so. A `RECOVERED` line gets one
+sentence: "Meta reads work again since <time>; yesterday's alarm is over."
+
 When a founder asks for the brief outside the job, get the same facts with
 `terminal(command="python3 ~/.hermes/scripts/fleet-brief-facts.py", timeout=300)`.
 

@@ -61,6 +61,8 @@ def main() -> None:
     if not acc.get("ok"):
         print(f"META: UNAVAILABLE — {acc.get('error')}")
         return
+    if acc.get("recovered"):
+        print(f"META RECOVERED: {acc['recovered']}\n")
     print(f"## Account\nStatus: {acc['status']}" + (f" — reason {acc['disable_reason']}" if acc.get("disable_reason") else "")
           + f". Currency {acc['currency']}.\n")
 

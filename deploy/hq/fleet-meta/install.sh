@@ -37,6 +37,10 @@ else
   echo "   no token yet — push it from the Mac (see header), then re-run"
 fi
 
+# fleet-meta-read remembers since when Meta reads fail (and when they recovered); only it writes here
+install -d -o fleetmeta -g fleetmeta -m0750 /var/lib/fleet-meta
+echo "   state dir /var/lib/fleet-meta (fleetmeta 0750)"
+
 say "3/5 tools (root-owned)"
 install -d -o root -g root -m0755 /usr/local/libexec
 install -o root -g root -m0755 "${SRC}/fleet-meta-read" /usr/local/libexec/fleet-meta-read

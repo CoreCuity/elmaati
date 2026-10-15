@@ -20,6 +20,15 @@ exception). This file is what narrows it:
 
 Dates are the ad account's own days (Adolia: America/Los_Angeles).
 Exit codes: 0 ok · 4 refused · 5 Meta did not answer.
+
+When Meta refuses (2026-10-13: one day of error 190 on a token that was fine before and after,
+reported to the founders as "renew Adolia's access"):
+  - Meta's code, subcode, type, message and trace id go to the journal, never the token.
+  - A refusal that can pass (temporary, rate limit, network) is retried once after RETRY_WAIT s.
+  - Only a token that is really dead (190 with subcode 458, 460 or 463) asks a founder to act;
+    any other 190 says "Meta refused the token; it often clears; no action yet".
+  - STATE remembers since when reads fail, and for RECOVERED_FOR h after they work again every
+    answer carries "recovered", so the next brief can say the alarm is over.
 """
 import argparse
 import datetime as dt
@@ -28,9 +37,11 @@ import os
 import re
 import sys
 import syslog
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from zoneinfo import ZoneInfo
 
 GRAPH = "https://graph.facebook.com/v25.0"
 TOKEN_FILE = "/etc/fleet-meta/token"
@@ -45,6 +56,15 @@ KEEP_ACTIONS = {  # Meta action type → what we call it
 LIVE = ["ACTIVE", "WITH_ISSUES", "DISAPPROVED", "PENDING_REVIEW", "IN_PROCESS", "CAMPAIGN_PAUSED", "ADSET_PAUSED"]
 MAX_OUT = 60_000
 TIMEOUT = 30
+RETRY_WAIT = 20
+STATE = "/var/lib/fleet-meta/state.json"
+RECOVERED_FOR = 30   # hours an answer keeps saying "reads work again"
+RENEW = "a founder must issue a new token: Access Token Debugger → Extend, then swap-meta-token.sh on the Mac"
+DEAD = {  # error 190 subcodes that do not pass on their own
+    458: "Meta says the CoreCuity Ads app is no longer authorised on CoreCuity's Facebook profile — " + RENEW,
+    460: "CoreCuity's Meta token stopped working because the Facebook password was changed — " + RENEW,
+    463: "CoreCuity's Meta token has expired — " + RENEW,
+}
 
 
 class Refused(Exception):
@@ -52,7 +72,9 @@ class Refused(Exception):
 
 
 class MetaDown(Exception):
-    pass
+    def __init__(self, msg: str, passing: bool = True, meta: dict | None = None):
+        super().__init__(msg)
+        self.passing, self.meta = passing, meta or {}
 
 
 def log(msg: str) -> None:
@@ -67,7 +89,7 @@ def token() -> str:
         raise MetaDown(f"token unreadable: {e.strerror}")
 
 
-def get(path: str, params: dict) -> dict:
+def get_once(path: str, params: dict) -> dict:
     q = dict(params, access_token=token())
     url = f"{GRAPH}/{path}?{urllib.parse.urlencode(q)}"
     try:
@@ -79,14 +101,70 @@ def get(path: str, params: dict) -> dict:
             err = json.load(e).get("error", {})
         except ValueError:
             err = {}
-        code = err.get("code")
+        meta = {"http": e.code, "code": err.get("code"), "subcode": err.get("error_subcode"),
+                "type": err.get("type"), "message": (err.get("message") or "")[:200],
+                "trace": err.get("fbtrace_id")}
+        log("meta_error " + " ".join(f"{k}={v!r}" for k, v in meta.items()))
+        code, sub = meta["code"], meta["subcode"]
+        if code == 190 and sub in DEAD:
+            raise MetaDown(DEAD[sub], passing=False, meta=meta)
         if code == 190:
-            raise MetaDown("the Meta token is expired or revoked — a founder must renew it")
+            raise MetaDown("Meta refused CoreCuity's token today (Meta's reason: "
+                           f"{meta['message'] or 'none given'}{f', subcode {sub}' if sub else ''}). "
+                           "This often clears on its own; no founder action yet", meta=meta)
         if code in (4, 17, 32, 613):
-            raise MetaDown("Meta rate limit — try again later")
-        raise MetaDown(f"Meta HTTP {e.code}: {err.get('message', '')[:200]}")
+            raise MetaDown("Meta rate limit — try again later", meta=meta)
+        raise MetaDown(f"Meta HTTP {e.code}: {meta['message']}", passing=e.code >= 500, meta=meta)
     except (urllib.error.URLError, TimeoutError) as e:
         raise MetaDown(f"Meta unreachable: {getattr(e, 'reason', e)}")
+
+
+def get(path: str, params: dict) -> dict:
+    try:
+        return get_once(path, params)
+    except MetaDown as e:
+        if not e.passing:
+            raise
+        log(f"retry in {RETRY_WAIT}s after: {e}")
+        time.sleep(RETRY_WAIT)
+        return get_once(path, params)
+
+
+def load_state() -> dict:
+    try:
+        return json.load(open(STATE))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(st: dict) -> None:
+    try:
+        tmp = STATE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(st, f)
+        os.replace(tmp, STATE)
+    except OSError as e:
+        log(f"state not saved: {e.strerror}")
+
+
+def local(ts: float) -> str:   # founders read Moroccan time
+    return dt.datetime.fromtimestamp(ts, ZoneInfo("Africa/Casablanca")).strftime("%a %d %b %H:%M")
+
+
+def note_outcome(out: dict, err: MetaDown | None) -> None:
+    """Remember failures across runs; add 'since' to an error and 'recovered' to a good answer."""
+    st, now = load_state(), time.time()
+    if err is not None:
+        st.setdefault("failing_since", now)
+        st["last_error"] = str(err)
+        out["error"] = f"{err} — Meta reads failing since {local(st['failing_since'])}"
+    else:
+        if st.get("failing_since"):
+            st = {"recovered_at": now, "failed_from": st["failing_since"], "last_error": st.get("last_error")}
+        if st.get("recovered_at") and now - st["recovered_at"] < RECOVERED_FOR * 3600:
+            out["recovered"] = (f"Meta reads work again since {local(st['recovered_at'])}; they had failed from "
+                                f"{local(st['failed_from'])} ({st.get('last_error')}). Nothing to do.")
+    save_state(st)
 
 
 def pages(path: str, params: dict, cap: int = 500) -> list:
@@ -236,6 +314,9 @@ def main() -> int:
         out, code = {"ok": False, "exit_code": 4, "error": str(e)}, 4
     except MetaDown as e:
         out, code = {"ok": False, "exit_code": 5, "error": str(e)}, 5
+        note_outcome(out, e)
+    else:
+        note_outcome(out, None)
     s = json.dumps(out, ensure_ascii=False)
     if len(s) > MAX_OUT:
         s = json.dumps({"ok": False, "exit_code": 4, "error": f"answer too large ({len(s)} chars): narrow the dates or level"})
