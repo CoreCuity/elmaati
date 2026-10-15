@@ -68,6 +68,8 @@ brief as is.** Turn each item into what a person would say out loud.
 **Servers and sites** — <"all fine" or the problem in plain words>
 **Our own work** — <one sentence, only if something moved or is stuck>
 
+**Still open** — <items marked ALREADY ASKED, one line, only if any>
+
 _Trial day N of 5 — reply with anything unclear or wrong._
 ```
 
@@ -88,6 +90,14 @@ _Trial day N of 5 — reply with anything unclear or wrong._
    dated waiting items never do. A server or site problem that has been open
    for days belongs under "Servers and sites", with how long it has been open
    if the facts say so.
+   **An entry marked `ALREADY ASKED` never goes in "Needs you today"** and
+   is not repeated in its client's sentences either: the founders saw it
+   yesterday and nobody touched it since. Put all of them in ONE line at the
+   very end, before the footer: "**Still open** — <short plain names, comma
+   separated> (asked since <the earliest date>)." No ticket codes, no reasons,
+   no nagging. When a founder edits the entry the mark disappears and it may
+   return to the top. If every candidate is marked, write "Nothing new needs
+   you this morning." instead of the list.
 3. **One or two sentences per client.** How it's going, then what we're
    waiting on and from whom, with the date we asked. Nothing changed and
    nothing waiting → "Quiet."

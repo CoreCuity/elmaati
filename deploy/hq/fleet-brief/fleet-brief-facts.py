@@ -38,6 +38,7 @@ LONG_OVERDUE_DAYS = 30
 OLD_DAYS = 45            # untouched this long = not news
 AGENT_ACCOUNT = "CoreCuity Fleet"   # Plane member the CLI sessions on the founders' Mac also write as
 META_CLIENTS = {"adolia"}
+BRIEFS = Path("/home/svc-hermes/.hermes/cron/output/376695eabdc0")   # what the fleet-brief job posted
 
 now = dt.datetime.now(TZ)
 today = now.date()
@@ -66,6 +67,39 @@ def plane(*args: str) -> dict:
     return r
 
 
+def asked_before() -> dict[str, list[dt.date]]:
+    """Board keys the brief already put under 'Needs you today', newest brief first.
+    (2026-10-14: the same decision led the brief seven days running.)"""
+    seen: dict[str, list[dt.date]] = {}
+    for f in sorted(BRIEFS.glob("*.md"), reverse=True)[:10]:
+        try:
+            day = dt.date.fromisoformat(f.name[:10])
+            text = f.read_text().split("## Response", 1)[1]
+        except (ValueError, IndexError, OSError):
+            continue
+        if day >= today:
+            continue
+        m = re.search(r"Needs you today\**\s*\n(.*?)(?:\n\s*\n|\Z)", text, re.S)
+        keys = set()
+        for proj, first, more in re.findall(r"\b([A-Z]{2,5})-(\d+)((?:\s*[/,]\s*(?:[A-Z]{2,5}-)?\d+)*)", m.group(1) if m else ""):
+            keys.add(f"{proj}-{first}")   # "(DD-16/DD-14/DD-13)" and "(CORE-32/30/28)" both name three entries
+            keys.update(f"{p or proj}-{n}" for p, n in re.findall(r"(?:([A-Z]{2,5})-)?(\d+)", more))
+        for key in keys:
+            seen.setdefault(key, []).append(day)
+    return seen
+
+
+ASKED = asked_before()
+
+
+def repeat(i: dict) -> str:
+    """' ALREADY ASKED …' when a brief of the last week asked about this entry and nobody touched it since."""
+    days = [d for d in ASKED.get(i["key"], []) if (today - d).days <= 7]
+    if not days or i["updated"][:10] >= days[0].isoformat():
+        return ""
+    return f" ALREADY ASKED in 'Needs you' on {len(days)} brief(s) since {days[-1]:%d %b}, untouched since"
+
+
 def line(i: dict) -> str:
     bits = [i["state"]]
     if i.get("assignees"):
@@ -74,7 +108,7 @@ def line(i: dict) -> str:
     if i.get("due"):
         bits.append(f"due {i['due']}")
     bits.append(f"updated {i['updated'][:10]}")
-    return f"- {i['key']} {i['name']} ({'; '.join(bits)})"
+    return f"- {i['key']} {i['name']} ({'; '.join(bits)})" + repeat(i)
 
 
 def plane_facts(key: str, changed: list[dict]) -> list[str]:
