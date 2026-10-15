@@ -138,6 +138,9 @@ ap["smart_policy"] = (
 )
 
 c.setdefault("security", {})["allow_private_urls"] = False   # no SSRF into the LAN
+# Post cron results bare: no "Cronjob Response / job_id / To stop or manage this job" wrapper
+# around the brief and the ads check (founders read them on a phone).
+c.setdefault("cron", {})["wrap_response"] = False
 
 yaml.safe_dump(c, open(p, "w"), sort_keys=False, allow_unicode=True)
 print("   gateway.multiplex_profiles:", c["gateway"]["multiplex_profiles"])
