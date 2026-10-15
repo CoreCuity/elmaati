@@ -16,12 +16,12 @@ hosts:
     # exist and have succeeded within the age limit; lingering users NOT listed show in the digest.
     tenant_backups:
       adolia: [adolia-backup.service, adolia-odoo-offsite-hetzner.service]
-      ajihost: [ajihost-backup.service]
+      ajihost: [ajihost-backup.service, ajihost-offsite-hetzner.service]
       odae: [odae-backup.service, odae-offsite-hetzner.service]
-      paradisante: [paradisante-backup.service]
+      paradisante: [paradisante-backup.service, paradisante-offsite-hetzner.service]
       plane: [plane-backup.service, plane-offsite-hetzner.service]
     # Intentional gaps (Najlaa, 2026-09-28) — kept out of the digest; any OTHER gap still shows there.
-    local_only_by_plan: [ajihost, paradisante]   # their plan has no off-site copy
+    local_only_by_plan: []                      # Massine enabled both off-site copies, 2026-10-15
     not_watched: [youandco]                      # client on hold, no interaction — no backup, no site/domain watch
 
   # Client servers we don't host but look after (added 2026-09-28). Backups there are not systemd units:
@@ -69,7 +69,7 @@ endpoints:
   - admin.desirsdorient.com
   - paradisante.ma
   - ajihost.ma
-  - api.ajihost.ma/api
+  - api.ajihost.ma/api/v1/health   # Swagger /api is disabled in production; probe the actual health route
 
 # Where each proxied (orange-cloud) site really lives. Visitors reach it through Cloudflare, which renews its
 # own edge certificate — so the certificate check reads the ORIGIN's certificate from these IPs instead.
