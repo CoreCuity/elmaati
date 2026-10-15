@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""fleet-model-sync — keep Elmaati on a model its ChatGPT seat still accepts.
+
+2026-10-15: OpenAI dropped gpt-5.5 from the Codex/ChatGPT-account model list overnight; the 08:00
+brief failed with "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account."
+Najlaa: "make the models auto-update so we don't run into this again."
+
+Runs as svc-hermes (user timer: hourly, and at 07:50 / 08:50 Casablanca before the brief and the
+ads check). Each run:
+  1. refreshes Codex's model list (one tiny `codex exec`; Codex rewrites ~/.codex/models_cache.json);
+  2. probes the current model.default through Hermes itself (`hermes chat -Q`, one short call);
+  3. if the probe fails with a model refusal, or the model is no longer listed, tries the listed
+     models in Codex's own priority order, probing each through Hermes, and switches to the first
+     that answers: config.yaml model.default (backup kept), gateway restart, a post in #infra-alerts.
+A switch also rewrites model.default in each worker profile that named the old model and runs
+`hermes cron resnap --all`: Hermes pins a model_snapshot into every job when it is created, so a
+new model.default alone does not reach the brief or the ads check (found 2026-10-15). Every run
+also resnaps if a job's snapshot drifted from model.default.
+A working model is never changed just because a newer one exists. A failure that is not about the
+model (network, login) changes nothing and only posts, once, to #infra-alerts.
+
+  fleet-model-sync              check, switch if needed
+  fleet-model-sync --dry-run    check and say what it would do; change and post nothing
+"""
+import datetime as dt
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+import yaml
+
+HOME = "/home/svc-hermes"
+HH = f"{HOME}/.hermes"
+CONF = f"{HH}/config.yaml"
+ENV = f"{HH}/.env"
+MODELS = f"{HOME}/.codex/models_cache.json"
+STATE = f"{HOME}/.local/state/fleet-model-sync.json"
+CHANNEL = "1505316048809885807"   # #infra-alerts (core/elmaati/deploy/hq/fleet-discord.yaml)
+PATH = f"{HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+REFUSED = ("not supported", "model_not_found", "does not exist", "unknown model", "invalid model")
+DRY = "--dry-run" in sys.argv
+
+
+def sh(cmd: list, timeout: int = 150) -> tuple:
+    env = dict(os.environ, HOME=HOME, HERMES_HOME=HH, PATH=PATH)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=HH, env=env)
+        return p.returncode, p.stdout + p.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "timed out"
+
+
+def probe(model: str) -> tuple:
+    """(ok, refused_for_model, detail) — one short call through Hermes, the path the jobs use."""
+    code, out = sh(["hermes", "chat", "-m", model, "-Q", "-q", "Reply with the single word PONG"])
+    if code == 0 and "PONG" in out.upper():
+        return True, False, "answered"
+    low = out.lower()
+    return False, any(r in low for r in REFUSED), " ".join(out.split())[-300:]
+
+
+def listed() -> list:
+    sh(["codex", "exec", "--skip-git-repo-check", "-s", "read-only", "Reply with the single word PONG"], 180)
+    try:
+        ms = json.load(open(MODELS))
+        ms = ms.get("models", ms) if isinstance(ms, dict) else ms
+    except (OSError, ValueError):
+        return []
+    ms = [m for m in ms if m.get("visibility") == "list" and m.get("supported_in_api", True)]
+    return [m["slug"] for m in sorted(ms, key=lambda m: m.get("priority", 999))]
+
+
+def post(text: str) -> None:
+    print(text)
+    if DRY:
+        return
+    token = next(l.split("=", 1)[1].strip().strip("\"'") for l in open(ENV) if l.startswith("DISCORD_BOT_TOKEN="))
+    req = urllib.request.Request(f"https://discord.com/api/v10/channels/{CHANNEL}/messages", method="POST",
+                                 data=json.dumps({"content": text[:1900], "allowed_mentions": {"parse": []}}).encode(),
+                                 headers={"Authorization": f"Bot {token}", "Content-Type": "application/json",
+                                          "User-Agent": "fleet-model-sync/1"})
+    urllib.request.urlopen(req, timeout=20).read()
+
+
+def state(update: dict = None) -> dict:
+    try:
+        s = json.load(open(STATE))
+    except (OSError, ValueError):
+        s = {}
+    if update is not None and not DRY:
+        s.update(update)
+        os.makedirs(os.path.dirname(STATE), exist_ok=True)
+        json.dump(s, open(STATE, "w"))
+    return s
+
+
+def switch(old: str, new: str) -> None:
+    stamp = dt.datetime.now().strftime("%Y%m%dT%H%M")
+    shutil.copy2(CONF, f"{CONF}.pre-model-{stamp}")
+    c = yaml.safe_load(open(CONF))
+    c["model"]["default"] = new
+    tmp = CONF + ".tmp"
+    yaml.safe_dump(c, open(tmp, "w"), sort_keys=False, allow_unicode=True)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CONF)
+    for prof in sorted(os.listdir(f"{HH}/profiles")):
+        pc = f"{HH}/profiles/{prof}/config.yaml"
+        try:
+            c = yaml.safe_load(open(pc)) or {}
+        except OSError:
+            continue
+        if (c.get("model") or {}).get("default") == old:
+            c["model"]["default"] = new
+            yaml.safe_dump(c, open(pc + ".tmp", "w"), sort_keys=False, allow_unicode=True)
+            os.chmod(pc + ".tmp", 0o600)
+            os.replace(pc + ".tmp", pc)
+    resnap()
+    sh(["systemctl", "--user", "start", "hermes-gateway-restart.service"], 120)
+
+
+def drifted(model: str) -> list:
+    """Names of unpinned cron jobs whose model_snapshot is not the current model.default."""
+    try:
+        d = json.load(open(f"{HH}/cron/jobs.json"))
+    except (OSError, ValueError):
+        return []
+    jobs = d.get("jobs", d) if isinstance(d, dict) else d
+    return [j.get("name") for j in jobs if not j.get("no_agent") and not j.get("model")
+            and j.get("model_snapshot") and j["model_snapshot"] != model]
+
+
+def resnap() -> None:
+    code, out = sh(["hermes", "cron", "resnap", "--all"], 120)
+    print(f"resnap exit={code} {' '.join(out.split())[-200:]}")
+
+
+def main() -> int:
+    current = yaml.safe_load(open(CONF))["model"]["default"]
+    models = listed()
+    ok, refused, detail = probe(current)
+    gone = bool(models) and current not in models
+    print(f"current={current} probe_ok={ok} refused={refused} listed={models}")
+    if ok and not gone:
+        late = drifted(current)
+        if late:
+            print(f"jobs pinned to an old model: {late}")
+            if not DRY:
+                resnap()
+        if state().get("warned"):
+            state({"warned": None})
+        return 0
+    if not ok and not refused:
+        if state().get("warned") != detail[:80]:
+            post(f"🧠 **Model check** — Elmaati's model `{current}` did not answer, but not because the model was "
+                 f"refused, so nothing was changed. Detail: {detail}")
+            state({"warned": detail[:80]})
+        return 1
+    why = "OpenAI refused it" if not ok else "it is no longer in the seat's model list"
+    for cand in [m for m in models if m != current]:
+        c_ok, _, c_detail = probe(cand)
+        print(f"candidate {cand}: {c_ok} {c_detail[:120]}")
+        if c_ok:
+            if not DRY:
+                switch(current, cand)
+            post(f"🧠 **Model switched** — Elmaati's model `{current}` stopped working ({why}). "
+                 f"Switched to `{cand}`, the first model the seat lists that answered a test call. "
+                 f"The brief, the ads check and chat now use it. Backup of the old config kept on the box."
+                 + (" (dry run: nothing changed)" if DRY else ""))
+            state({"warned": None, "last_switch": f"{current} -> {cand} {dt.datetime.now():%F %H:%M}"})
+            return 0
+    post(f"🧠 **Model check — action needed** — Elmaati's model `{current}` stopped working ({why}) and none "
+         f"of the seat's listed models answered a test call ({', '.join(models) or 'list unreadable'}). "
+         f"The brief and the ads check will fail until a founder picks a model.")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
