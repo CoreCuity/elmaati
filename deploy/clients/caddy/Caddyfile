@@ -292,6 +292,9 @@ desirs-website.corecuity.com {
 dd-odoo.corecuity.com {
     @dbmgr path /web/database/*
     respond @dbmgr 403
+    # Neutralised outbound settings do not authenticate inbound provider callbacks.
+    @whatsapp_callbacks path /api/spa/whatsapp/webhook /api/spa/whatsapp/status
+    respond @whatsapp_callbacks 403
     encode zstd gzip
     header {
         X-Robots-Tag "noindex, nofollow, noarchive"
