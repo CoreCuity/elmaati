@@ -276,6 +276,31 @@ desirs.corecuity.com {
     reverse_proxy 127.0.0.1:8101
 }
 
+# --- Désirs d'Orient — frontend redesign preview, reconciled 2026-10-15 ---
+# Preserve the existing live preview route when deploying this canonical file.
+# Tenant `desirs`: separate Next.js frontend, not the Odoo rehearsal backend.
+desirs-website.corecuity.com {
+    import security_headers
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8105
+}
+
+# --- Désirs d'Orient — isolated April 2026 Odoo 17 validation, added 2026-10-15 ---
+# Separate neutralised database, filestore and containers; existing rehearsal remains on 8101.
+# Remove this block and its DNS record when the isolated validation stack is retired.
+dd-odoo.corecuity.com {
+    @dbmgr path /web/database/*
+    respond @dbmgr 403
+    encode zstd gzip
+    header {
+        X-Robots-Tag "noindex, nofollow, noarchive"
+        X-Frame-Options "SAMEORIGIN"
+        ?X-Content-Type-Options "nosniff"
+    }
+    reverse_proxy 127.0.0.1:8107
+}
+
 # --- Youssef Ramchi — portfolio (static Vite build), added 2026-10-11 ---
 # Tenant `youssef` (uid 2008): rootless Docker, nginx on 127.0.0.1:8102, files in /srv/clients/youssef/site.
 # Source: CoreCuity-PM repo, projects/youssef/landing.
