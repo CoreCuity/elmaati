@@ -5,7 +5,7 @@ Hermes cron runs this before the agent (`hermes cron create --script`); its stdo
 only material the brief is written from. Deterministic: the model phrases, it does not fetch.
 
 Sources, all read-only and all already the fleet's:
-  Sentinel  python3 /usr/local/lib/sentinel/sentinel-check --digest --dry-run
+  Sentinel  /usr/bin/python3 /usr/local/lib/sentinel/sentinel-check --digest --dry-run
   Plane     /usr/local/bin/fleet-plane (6 projects, GET only)
   Vault     /var/lib/fleet-vault (founder-approved cards/timelines + the fleet's journal)
   Meta      /usr/local/bin/fleet-meta (Adolia only, GET only) — counts, never money
@@ -236,9 +236,17 @@ def main() -> None:
     print()
 
     print("## Sentinel (servers, sites, backups, domains)")
-    code, out = run(["python3", "/usr/local/lib/sentinel/sentinel-check", "--digest", "--dry-run"], timeout=180)
+    # The system Python, not whatever python3 comes first on PATH: since the 2026-10-15 Hermes update, cron
+    # scripts run with Hermes's private Python 3.14 first, which has no PyYAML (brief of 2026-10-16: exit 1).
+    try:
+        p = subprocess.run(["/usr/bin/python3", "/usr/local/lib/sentinel/sentinel-check", "--digest", "--dry-run"],
+                           capture_output=True, text=True, timeout=180)
+        code, out, err = p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired:
+        code, out, err = 124, "", "timed out after 180 s"
     body = [l for l in out.splitlines() if l.strip() and not l.startswith("--- would post")]
-    print("\n".join(body[:40]) if code == 0 and body else f"Sentinel: UNAVAILABLE (exit {code})")
+    print("\n".join(body[:40]) if code == 0 and body else
+          f"Sentinel: UNAVAILABLE (exit {code}: {' '.join(err.split())[-200:] or 'no error text'})")
     print()
 
     rec = plane("recent", f"--since={since.isoformat()}", "--limit=50")

@@ -34,7 +34,7 @@ founder to renew unless the facts say so. A `RECOVERED` line gets one
 sentence: "Meta reads work again since <time>; yesterday's alarm is over."
 
 When a founder asks outside the job, get the same facts with
-`terminal(command="python3 ~/.hermes/scripts/fleet-ads-facts.py", timeout=300)`.
+`terminal(command="/usr/bin/python3 ~/.hermes/scripts/fleet-ads-facts.py", timeout=300)`.
 For a narrower question, `fleet-meta` answers directly (read-only, Adolia only):
 `fleet-meta live adolia`, `fleet-meta results adolia --level=adset --since=… --until=…`,
 `fleet-meta changes adolia --since=…`.

@@ -32,7 +32,7 @@ terminal(command="cat ~/.local/state/sentinel/state.json")
 **2. A fresh full picture** (takes about 10 seconds, posts nothing)
 
 ```
-terminal(command="python3 /usr/local/lib/sentinel/sentinel-check --digest --dry-run", timeout=120)
+terminal(command="/usr/bin/python3 /usr/local/lib/sentinel/sentinel-check --digest --dry-run", timeout=120)
 ```
 
 This prints the daily digest as it would be posted now: open problems, the
