@@ -11,6 +11,7 @@ channels:
   # 🛰️ OPS & INFRA
   alerts:      {id: "1505316048809885807", name: infra-alerts,   profile: sentinel}
   # 📦 CLIENTS — Ads and Clerk post here; inbound stays with Elmaati
+  corecuity:   {id: "1561138317012246578", name: corecuity,      profile: default}
   adolia:      {id: "1505316062860673184", name: adolia,         profile: default}
   odae:        {id: "1552185207447101470", name: odae,           profile: default}
   desirs:      {id: "1505316064542589040", name: desirs-dorient, profile: default}
