@@ -56,3 +56,18 @@ hmd.corecuity.com {
 	redir @legacy / 308
 	file_server
 }
+
+# Core-Outreach prospecting dashboard (CoreCuity/Outreach). Rootless Docker under svc-outreach, app on
+# loopback :3042; the app has its own login page. Moved from dead server-architect — approved by Najlaa, 2026-10-18.
+outreach.corecuity.com {
+	encode zstd gzip
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:3042
+}
