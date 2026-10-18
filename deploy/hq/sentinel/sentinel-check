@@ -27,6 +27,7 @@ import yaml
 CONF = "/usr/local/lib/sentinel/sentinel.yaml"
 STATE = os.path.expanduser("~/.local/state/sentinel/state.json")
 DOMAINS = os.path.expanduser("~/.local/state/sentinel/domains.json")   # expiry cache, refreshed daily
+GWMEM = os.path.expanduser("~/.local/state/sentinel/gateway-memory.jsonl")   # see record_gateway_memory
 KEY = os.path.expanduser("~/.ssh/fleet_ed25519")
 ENV = os.path.expanduser("~/.hermes/.env")
 UA = "corecuity-sentinel (v0; +https://corecuity.com)"
@@ -400,6 +401,32 @@ def post(text, channel, dry):
         urllib.request.urlopen(req, timeout=20).read()
 
 
+def record_gateway_memory(now):
+    """One row per check: the Hermes gateway's memory and how long it has been up. Record only, no alert.
+    Decides whether the nightly restart (hermes-nightly-restart.sh, upstream #58817, fixed in v2026.6.19)
+    can go: flat ~195 MB/day up to 10-14, 220–567 MB since the v0.22 update of 2026-10-15. Started
+    2026-10-18 on Najlaa's go; remove this with the restart timer, or once the question is settled."""
+    try:
+        out = subprocess.run(["systemctl", "--user", "show", "hermes-gateway.service", "--timestamp=unix",
+                              "-p", "MemoryCurrent", "-p", "MainPID", "-p", "ActiveEnterTimestamp"],
+                             capture_output=True, text=True, timeout=10).stdout
+        v = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+        started = int(v.get("ActiveEnterTimestamp", "").lstrip("@") or 0)
+        mem = v.get("MemoryCurrent", "")
+        row = {"ts": datetime.datetime.fromtimestamp(now, TZ).isoformat(timespec="minutes"),
+               "mem_mb": round(int(mem) / 2**20) if mem.isdigit() else None,
+               "up_h": round((now - started) / 3600, 2) if started else None, "pid": v.get("MainPID")}
+        rows = []
+        try:
+            rows = open(GWMEM).read().splitlines()[-2000:]   # ~20 days at one row per 15 min
+        except OSError:
+            pass
+        with open(GWMEM, "w") as f:
+            f.write("\n".join(rows + [json.dumps(row)]) + "\n")
+    except Exception as e:   # never let the measurement break the watch
+        print(f"gateway memory not recorded: {why(e)}", file=sys.stderr)
+
+
 def main():
     dry, digest = "--dry-run" in sys.argv, "--digest" in sys.argv
     conf = yaml.safe_load(open(CONF))
@@ -474,6 +501,8 @@ def main():
         print(f"no change — {len(found)} open, {targets} targets")
     if not dry:
         json.dump(found, open(STATE, "w"), indent=1, ensure_ascii=False)   # after the post, so a failed post retries
+        if not digest:
+            record_gateway_memory(now)
 
 
 if __name__ == "__main__":
