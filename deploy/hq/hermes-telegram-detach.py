@@ -24,8 +24,11 @@ else:
     (backup/'telegram.env').write_text('\n'.join(telegram)+'\n'); (backup/'telegram.env').chmod(0o600)
     # Request quiet shutdown so Hermes does not announce a shutdown to Telegram.
     sys.path.insert(0,str(home/'hermes-agent'))
-    from gateway.drain_control import write_drain_marker
-    import inspect
-    print('Drain marker API:',str(inspect.signature(write_drain_marker)))
+    from gateway.drain_control import write_drain_request, clear_drain_request
+    write_drain_request(principal="Najlaa-approved-Telegram-handoff", suppress_notification=True)
     env.write_text('\n'.join(x for x in lines if x not in telegram)+'\n'); env.chmod(0o600)
-    print('Telegram variables backed up and removed; restart gateway to activate.')
+    try:
+        subprocess.run(['systemctl','--user','restart','hermes-gateway.service'],check=True,env={**os.environ,'XDG_RUNTIME_DIR':f'/run/user/{os.getuid()}'})
+    finally:
+        clear_drain_request()
+    print('Telegram detached; Hermes gateway restarted for remaining channels.')
