@@ -30,12 +30,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from zoneinfo import ZoneInfo
 
 BASE = "https://plane.corecuity.com/api/v1/workspaces/workspace"
 TOKEN_FILE = "/etc/fleet-plane/token"
 ALLOWED = ("ADOL", "ODAE", "DD", "AHQ", "CORE", "OPS")
 MAX_OUT = 60_000
 TIMEOUT = 20
+TZ = ZoneInfo("Africa/Casablanca")   # Plane answers this token in UTC; the brief and the founders count days in Casablanca
 
 
 class Refused(Exception):
@@ -89,6 +91,16 @@ def text(h: str | None, limit: int) -> str:
     t = html.unescape(re.sub(r"<[^>]+>", "", t))
     t = re.sub(r"\n{3,}", "\n\n", t).strip()
     return t if len(t) <= limit else t[:limit] + " …[cut]"
+
+
+def local(ts: str | None, n: int) -> str:
+    """Plane timestamp -> Casablanca time, first n chars ("2026-10-15T23:39Z" read as 10-15 was 10-16 for a founder)."""
+    if not ts:
+        return ""
+    try:
+        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(TZ).isoformat(" ")[:n]
+    except ValueError:
+        return ts[:n].replace("T", " ")
 
 
 def day(s: str) -> str:
@@ -158,9 +170,9 @@ class Project:
             "labels": [self.labels().get(l, "?") for l in i.get("labels") or []],
             "start_date": i.get("start_date"),
             "due": i.get("target_date"),
-            "created": (i.get("created_at") or "")[:10],
-            "updated": (i.get("updated_at") or "")[:16].replace("T", " "),
-            "completed": (i.get("completed_at") or "")[:10] or None,
+            "created": local(i.get("created_at"), 10),
+            "updated": local(i.get("updated_at"), 16),
+            "completed": local(i.get("completed_at"), 10) or None,
         }
 
 
@@ -177,7 +189,7 @@ def walk(p: Project, since: str | None, limit: int):
             q["cursor"] = cursor
         d = get(f"/projects/{p.id}/issues/", q)
         for i in results(d):
-            if since and (i.get("updated_at") or "")[:10] < since:
+            if since and local(i.get("updated_at"), 10) < since:
                 return
             if i.get("archived_at") or i.get("is_draft"):
                 continue
@@ -223,7 +235,7 @@ def cmd_issue(a) -> dict:
     cs.sort(key=lambda c: c.get("created_at") or "")
     out["comments_total"] = len(cs)
     out["comments"] = [{"by": p.people().get(c.get("actor") or c.get("created_by"), "?"),
-                        "at": (c.get("created_at") or "")[:16].replace("T", " "),
+                        "at": local(c.get("created_at"), 16),
                         "text": text(c.get("comment_html"), 1500)} for c in cs[-a.comments:]] if a.comments else []
     return out
 

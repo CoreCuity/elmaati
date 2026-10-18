@@ -43,6 +43,7 @@ BRIEFS = Path("/home/svc-hermes/.hermes/cron/output/376695eabdc0")   # what the 
 now = dt.datetime.now(TZ)
 today = now.date()
 since = today - dt.timedelta(days=1)
+week_ago = today - dt.timedelta(days=7)
 
 
 def run(cmd: list[str], timeout: int = 120) -> tuple[int, str]:
@@ -93,15 +94,19 @@ ASKED = asked_before()
 
 
 def repeat(i: dict) -> str:
-    """' ALREADY ASKED …' when a brief of the last week asked about this entry and nobody touched it since."""
+    """' ALREADY ASKED …' when a brief of the last week asked about this entry and nobody touched it since.
+    Never for an urgent entry: it stays in 'Needs you' until someone acts (2026-10-17: an urgent Désirs
+    entry was folded into 'Still open' after one mention)."""
+    if i.get("priority") == "urgent":
+        return ""
     days = [d for d in ASKED.get(i["key"], []) if (today - d).days <= 7]
-    if not days or i["updated"][:10] >= days[0].isoformat():
+    if not days or i["updated"][:16] >= f"{days[0].isoformat()} 08:00":   # the brief posts at 08:00
         return ""
     return f" ALREADY ASKED in 'Needs you' on {len(days)} brief(s) since {days[-1]:%d %b}, untouched since"
 
 
 def line(i: dict) -> str:
-    bits = [i["state"]]
+    bits = [i["state"]] + (["URGENT"] if i.get("priority") == "urgent" else [])
     if i.get("assignees"):
         bits.append("→ " + ", ".join("an agent session (no person assigned)" if a == AGENT_ACCOUNT else a
                                       for a in i["assignees"]))
@@ -111,7 +116,7 @@ def line(i: dict) -> str:
     return f"- {i['key']} {i['name']} ({'; '.join(bits)})" + repeat(i)
 
 
-def plane_facts(key: str, changed: list[dict]) -> list[str]:
+def plane_facts(key: str, changed: list[dict], this_week: list[dict] | None = None) -> list[str]:
     r = plane("issues", key, "--limit=150")
     if not r.get("ok"):
         return [f"Plane {key}: UNAVAILABLE — {r.get('error')}"]
@@ -154,6 +159,18 @@ def plane_facts(key: str, changed: list[dict]) -> list[str]:
                    f"not {len(changed)} pieces of news. Do not list them.")
     else:
         out += [line(i) for i in changed]
+    if this_week is not None:
+        done = [i for i in this_week if i["state_group"] == "completed"]
+        moving = [i for i in this_week if i["state_group"] != "completed" and i not in changed]
+        if not this_week:
+            out.append(f"This week on the board (since {week_ago:%d %b}): nothing edited or finished.")
+        elif len(this_week) > 25:
+            out.append(f"This week on the board (since {week_ago:%d %b}): {len(this_week)} entries edited — a bulk tidy-up, not news.")
+        else:
+            out.append(f"This week on the board (since {week_ago:%d %b}): {len(this_week)} entries edited, {len(done)} finished. "
+                       "Edits to the list, NOT changes to the client's systems:")
+            out += [f"- finished: {i['key']} {i['name']} (on {i.get('completed') or i['updated'][:10]})" for i in done[:8]]
+            out += [f"- worked on: {i['key']} {i['name']} ({i['state']}; last edit {i['updated'][:10]})" for i in moving[:8]]
     if old_board:
         out.append(f"Old board entries (open, untouched for {OLD_DAYS}+ days — NOT news, never in 'Needs you'): "
                    f"{len(old_board)}, oldest last touched {old_board[0]['updated'][:10]}.")
@@ -209,6 +226,17 @@ def engagement(folder: str) -> str:
 def vault_facts(folder: str) -> list[str]:
     out = []
     tl = VAULT / "clients" / folder / "timeline.md"
+    card = VAULT / "clients" / folder / "card.md"
+    ages = []
+    for f, what in ((card, "card"), (tl, "timeline")):
+        m = re.search(r"^approved:.*?(\d{4}-\d{2}-\d{2})", f.read_text(), re.M) if f.exists() else None
+        if m:
+            ages.append(f"{what} approved {m.group(1)} ({(today - dt.date.fromisoformat(m.group(1))).days} days ago)")
+    newest = re.findall(r"^- (\d{4}-\d{2}-\d{2}) ·", tl.read_text(), re.M) if tl.exists() else []
+    if newest:
+        ages.append(f"newest timeline line {max(newest)}")
+    if ages:
+        out.append("Founder-approved notes: " + "; ".join(ages) + ".")
     if tl.exists():
         text = tl.read_text()
         m = re.search(r"^approved:.*?(\d{4}-\d{2}-\d{2})", text, re.M)
@@ -253,6 +281,10 @@ def main() -> None:
     changed = rec.get("projects", {}) if rec.get("ok") else {}
     if not rec.get("ok"):
         print(f"Plane recent changes: UNAVAILABLE — {rec.get('error')}\n")
+    # A day with no edits is not a quiet week (2026-10-17: "no new updates" on Désirs in the busiest
+    # week of its move, because nothing was edited in the last 24 h).
+    rw = plane("recent", f"--since={week_ago.isoformat()}", "--limit=50")
+    weekly = rw.get("projects", {}) if rw.get("ok") else None
 
     for key, folder, name in CLIENTS:
         paused = engagement(folder)
@@ -266,7 +298,7 @@ def main() -> None:
             print(f"Status on the founder-approved card: {paused}.")
         if folder in META_CLIENTS:
             print("\n".join(ads_facts(folder)))
-        print("\n".join(plane_facts(key, changed.get(key, []))))
+        print("\n".join(plane_facts(key, changed.get(key, []), weekly.get(key, []) if weekly is not None else None)))
         print("\n".join(vault_facts(folder)))
         print()
         time.sleep(5)  # Plane allows 60 requests a minute

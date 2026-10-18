@@ -1,7 +1,7 @@
 ---
 name: fleet-brief
 description: "Write the founders' 08:00 daily brief for #briefing from the facts block the brief job hands you: in plain words, what needs a founder today and how each client is doing. Used by the scheduled brief job; also when a founder asks for 'the brief' now."
-version: 3.0.0
+version: 3.1.0
 author: CoreCuity
 license: proprietary
 platforms: [linux]
@@ -98,9 +98,17 @@ _Trial day N of 5 — reply with anything unclear or wrong._
    no nagging. When a founder edits the entry the mark disappears and it may
    return to the top. If every candidate is marked, write "Nothing new needs
    you this morning." instead of the list.
+   **An entry the facts mark `URGENT` always goes first in "Needs you today"**
+   (it is never marked ALREADY ASKED), and never in "Still open".
 3. **One or two sentences per client.** How it's going, then what we're
-   waiting on and from whom, with the date we asked. Nothing changed and
-   nothing waiting → "Quiet."
+   waiting on and from whom, with the date we asked. "How it's going" comes
+   from the client's `This week on the board` line when nothing was edited
+   since yesterday: say in plain words what was finished and what is being
+   worked on this week ("This week: the test copy of the new server was
+   checked and fixed; the switch-over is still being prepared."). Write
+   "Quiet." only when that week line says nothing was edited or finished.
+   **Never write "No new updates"** — say "Quiet since yesterday" and then
+   the week.
 4. **Leave out old clutter.** Anything not touched in over a month that
    nobody is waiting on is not news — leave it out. If a client's to-do list
    is badly out of date, say it once at the end: "Tidy-up: Odae's to-do list
@@ -120,6 +128,13 @@ _Trial day N of 5 — reply with anything unclear or wrong._
      this morning. Once the last check is more than 14 days old, do not repeat
      the items: write once, at the end, "Tidy-up: the notes on <client> were
      last checked on <date>."
+   - **An entry's "updated" date is when somebody edited the line**, not when
+     anybody checked with the client. Never write "last checked <date>" or
+     "asked again on <date>" from it; use the date the note itself gives.
+   - **"Founder-approved notes: … approved <date>"** is for you, not the
+     founders. Mention it only as a tidy-up at the end, and only when it is
+     more than 14 days old and the week line shows work: "Tidy-up: the notes
+     on <client> were approved on <date>; the work has moved since."
    - **"An agent session" is not a person.** Work assigned to it was created
      from a founder's own working session. Never address it to anyone and
      never call it the fleet's work; do not put it in "Needs you today" unless
