@@ -290,8 +290,8 @@ desirs-website.corecuity.com {
 # --- Désirs d'Orient — isolated April 2026 Odoo 17 validation, added 2026-10-15 ---
 # Separate neutralised database, filestore and containers; existing rehearsal remains on 8101.
 # Remove this block and its DNS record when the isolated validation stack is retired.
-# dd-new.desirsdorient.ma added 2026-10-19 (Najlaa): same copy, on the client's new domain.
-dd-odoo.corecuity.com, dd-new.desirsdorient.ma {
+# Renamed dd-new to dd-dev 2026-10-20 (Najlaa): keep the refreshed copy as staging.
+dd-odoo.corecuity.com, dd-dev.desirsdorient.ma {
     @dbmgr path /web/database/*
     respond @dbmgr 403
     # Neutralised outbound settings do not authenticate inbound provider callbacks.
