@@ -341,3 +341,23 @@ www.corecuity.com {
     redir https://corecuity.com{uri} permanent
 }
 
+# --- CoreCuity Operations ERP (Odoo 19), added 2026-10-22 ---
+ops.corecuity.com {
+    # Block Odoo database manager
+    @dbmgr path /web/database/manager* /web/database/selector* /web/database/create* /web/database/duplicate* /web/database/drop* /web/database/backup* /web/database/restore* /web/database/change_password*
+    respond @dbmgr 403
+
+    import security_headers
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+
+    @websocket {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    reverse_proxy @websocket 127.0.0.1:8106
+
+    reverse_proxy 127.0.0.1:8106
+}
+
+
