@@ -289,6 +289,29 @@ desirs-website.corecuity.com {
 
 # --- Désirs d'Orient — isolated April 2026 Odoo 17 validation, added 2026-10-15 ---
 # Separate neutralised database, filestore and containers; existing rehearsal remains on 8101.
+# Future production of Désirs d'Orient (Najlaa, 2026-10-23): fresh copy of the live data on the April
+# stack, 127.0.0.1:8109, muted until the cutover. The .com names keep pointing at Hetzner until then.
+admin.desirsdorient.ma {
+    # /web/database/list stays open for the Odoo mobile app (dbfilter limits it to Prod);
+    # the manager, selector and every other database endpoint stay blocked.
+    @dbmgr {
+        path /web/database/*
+        not path /web/database/list
+    }
+    respond @dbmgr 403
+    # Provider callbacks stay blocked until the cutover switches WhatsApp on here.
+    @whatsapp_callbacks path /api/spa/whatsapp/webhook /api/spa/whatsapp/status
+    respond @whatsapp_callbacks 403
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-Robots-Tag "noindex, nofollow"
+    }
+    reverse_proxy 127.0.0.1:8109
+}
+
 # Remove this block and its DNS record when the isolated validation stack is retired.
 # Renamed dd-new to dd-dev 2026-10-20 (Najlaa): keep the refreshed copy as staging.
 dd-odoo.corecuity.com, dd-dev.desirsdorient.ma {
@@ -309,6 +332,15 @@ dd-odoo.corecuity.com, dd-dev.desirsdorient.ma {
         ?X-Content-Type-Options "nosniff"
     }
     reverse_proxy 127.0.0.1:8107
+}
+
+# --- Adolia — Headless Next.js PDP storefront, added 2026-10-20 ---
+# Tenant `adolia`: rootless Docker, Next.js on 127.0.0.1:8099, files in /srv/clients/adolia/storefront.
+adolia.corecuity.com {
+    import security_headers
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8099
 }
 
 # --- Youssef Ramchi — portfolio (static Vite build), added 2026-10-11 ---
