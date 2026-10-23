@@ -292,7 +292,12 @@ desirs-website.corecuity.com {
 # Remove this block and its DNS record when the isolated validation stack is retired.
 # Renamed dd-new to dd-dev 2026-10-20 (Najlaa): keep the refreshed copy as staging.
 dd-odoo.corecuity.com, dd-dev.desirsdorient.ma {
-    @dbmgr path /web/database/*
+    # /web/database/list stays open for the Odoo mobile app (dbfilter limits it to Prod);
+    # the manager, selector and every other database endpoint stay blocked.
+    @dbmgr {
+        path /web/database/*
+        not path /web/database/list
+    }
     respond @dbmgr 403
     # Neutralised outbound settings do not authenticate inbound provider callbacks.
     @whatsapp_callbacks path /api/spa/whatsapp/webhook /api/spa/whatsapp/status
