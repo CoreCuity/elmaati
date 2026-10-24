@@ -261,22 +261,6 @@ www.youandco.online {
 # -------------------------------------------------------------------------
 
 # --- Désirs d'Orient — REHEARSAL copy of production (neutralised), added 2026-10-09 ---
-# Temporary: remove this block and the desirs.corecuity.com DNS record when the rehearsal copy is wiped
-# (clients/desirs/relocation/RUNBOOK.md phase 3.5).
-# dd-stage.desirsdorient.ma added 2026-10-19 (Najlaa): same copy, on the client's new domain.
-desirs.corecuity.com, dd-stage.desirsdorient.ma {
-    # The Odoo database manager answers even with list_db = False; never expose it.
-    @dbmgr path /web/database/*
-    respond @dbmgr 403
-    encode zstd gzip
-    header {
-        X-Robots-Tag "noindex, nofollow"
-        X-Frame-Options "SAMEORIGIN"
-        ?X-Content-Type-Options "nosniff"
-    }
-    reverse_proxy 127.0.0.1:8101
-}
-
 # --- Désirs d'Orient — frontend redesign preview, reconciled 2026-10-15 ---
 # Preserve the existing live preview route when deploying this canonical file.
 # Tenant `desirs`: separate Next.js frontend, not the Odoo rehearsal backend.
