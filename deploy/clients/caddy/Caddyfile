@@ -398,3 +398,11 @@ ops.corecuity.com {
 }
 
 
+
+# --- LAMA Lab (WordPress), added 2026-10-23 ---
+# Tenant `lama` (uid 2010): rootless Docker, wordpress on 127.0.0.1:8108, stack in /srv/clients/lama.
+lama.corecuity.com {
+    import security_headers
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8108
+}
