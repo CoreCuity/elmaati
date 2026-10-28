@@ -390,3 +390,12 @@ lama.corecuity.com {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8108
 }
+
+# --- CoreCuity NFC Wood Contact Card Demo, added 2026-10-28 ---
+contact.corecuity.com {
+    import security_headers
+    encode zstd gzip
+    root * /var/www/corecuity-contact
+    file_server
+}
+
