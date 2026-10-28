@@ -391,11 +391,24 @@ lama.corecuity.com {
     reverse_proxy 127.0.0.1:8108
 }
 
-# --- CoreCuity NFC Wood Contact Card Demo, added 2026-10-28 ---
+# --- CoreCuity NFC Wood Contact Card & Subaccount Routing, updated 2026-10-28 ---
 contact.corecuity.com {
     import security_headers
     encode zstd gzip
-    root * /var/www/corecuity-contact
-    file_server
+
+    # Static assets wire-speed cache
+    handle /assets/* {
+        root * /var/www/corecuity-contact
+        file_server
+    }
+    handle /favicon.ico {
+        root * /var/www/corecuity-contact
+        file_server
+    }
+
+    # Dynamic contact cards, vCards, QR SVG, and Admin Dashboard
+    handle {
+        reverse_proxy 127.0.0.1:8110
+    }
 }
 
