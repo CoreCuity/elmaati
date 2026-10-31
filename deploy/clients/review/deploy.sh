@@ -10,7 +10,7 @@ COPYFILE_DISABLE=1 tar --no-xattrs --exclude="._*" -czf - app.py review.service 
   D=/srv/clients/corecuity/review
   mkdir -p \$D/data && chmod 700 \$D/data
   tar -xzf - -C \$D 2>/dev/null
-  find \$D -name "._*" -delete; chmod 750 \$D
+  cd \$D && find . -name "._*" -delete && chmod 750 \$D
   test -f \$D/.env || { umask 077; : > \$D/.env; }
   mkdir -p ~/.config/systemd/user && cp \$D/review.service ~/.config/systemd/user/review.service
   export XDG_RUNTIME_DIR=/run/user/\$(id -u)
