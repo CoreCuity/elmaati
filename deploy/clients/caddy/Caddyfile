@@ -349,6 +349,20 @@ stage.corecuity.com {
     reverse_proxy 127.0.0.1:8103
 }
 
+# --- review.corecuity.com: private review pages (answer audits/reviews on the page), added 2026-10-31 ---
+# Approved by Najlaa (Discord #desirs-dorient, 2026-10-31 00:55). Shows client internals: never public.
+# Tenant `corecuity` (uid 2009): python3 stdlib app on 127.0.0.1:8130 (systemd user unit review.service),
+# code in /srv/clients/corecuity/review, shipped by deploy/clients/review/deploy.sh.
+# Basic auth: user `najlaa`; password in HQ .secrets/review-portal.env. Snippet appended to /etc/caddy/auth.caddy by hand.
+review.corecuity.com {
+    import auth_review
+    import security_headers
+    import no_framing
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8130
+}
+
 # --- corecuity.com production (Next.js standalone), migrated from Vercel 2026-10-13 ---
 # Tenant `corecuity` (uid 2009): rootless Docker, node on 127.0.0.1:8104, bundle in /srv/clients/corecuity/prod/app.
 # Source: github.com/CoreCuity/website, branch `main`, shipped by deploy/prod/deploy.sh.
@@ -381,8 +395,6 @@ ops.corecuity.com {
     reverse_proxy 127.0.0.1:8106
 }
 
-
-
 # --- LAMA Lab (WordPress), added 2026-10-23 ---
 # Tenant `lama` (uid 2010): rootless Docker, wordpress on 127.0.0.1:8108, stack in /srv/clients/lama.
 lama.corecuity.com {
@@ -411,4 +423,31 @@ contact.corecuity.com {
         reverse_proxy 127.0.0.1:8110
     }
 }
+
+# --- Paradisanté Headless Backend (WordPress + WooCommerce), added 2026-10-30 ---
+# Tenant `paradisante` (uid 2001): rootless Docker, wordpress on 127.0.0.1:8111, stack in /srv/clients/paradisante/headless.
+paradisante-api.corecuity.com {
+    @wpmeta path /readme.html /license.txt /wp-config-sample.php
+    respond @wpmeta 404
+
+    import security_headers
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+
+    reverse_proxy 127.0.0.1:8111 {
+        header_down -X-Powered-By
+        header_down -Server
+    }
+}
+
+# --- Paradisanté Headless Frontend (Next.js Storefront), added 2026-10-30 ---
+# Tenant `paradisante` (uid 2001): rootless Docker, node on 127.0.0.1:8112, stack in /srv/clients/paradisante/headless.
+paradisante-app.corecuity.com {
+    import security_headers
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8112
+}
+
+
 

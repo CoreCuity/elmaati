@@ -1,0 +1,15 @@
+# systemd USER unit for tenant `corecuity` (uid 2009) on corecuity-clients.
+# Installed by deploy.sh to ~/.config/systemd/user/review.service.
+[Unit]
+Description=review.corecuity.com — CoreCuity review pages (127.0.0.1:8130)
+
+[Service]
+WorkingDirectory=/srv/clients/corecuity/review
+ExecStart=/usr/bin/python3 /srv/clients/corecuity/review/app.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

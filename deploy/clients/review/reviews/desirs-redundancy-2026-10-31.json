@@ -1,0 +1,186 @@
+{
+ "slug": "desirs-redundancy-2026-10-31",
+ "client": "Désirs d'Orient",
+ "title": "Redundancy audit",
+ "subtitle": "spa + spa_pos custom code · dd-dev 53e4440 · 31 Oct 2026 · read-only",
+ "intro": "Pick Oui, Non or À discuter for each item, add a comment if needed, then press Save. Section A are bugs found on the way — recommended first. Every change still goes through the full test run and a browser check before dd-dev.",
+ "sections": [
+  {
+   "id": "A",
+   "title": "Bugs and safety gaps found by the audit — fix first",
+   "items": [
+    {
+     "id": "A1",
+     "title": "Till: contact link opens the wrong screen",
+     "today": "In the till, the link to a client's contact opens an HR screen (« Resume Line Types ») because a screen number is hard-coded.",
+     "proposal": "Remove our patch; Odoo's own link already opens the right contact.",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    },
+    {
+     "id": "A2",
+     "title": "Online bookings that auto-confirm earn no commission",
+     "today": "When a website booking is confirmed automatically, it skips the normal confirmation step, so no commission is created for the practitioner.",
+     "proposal": "Use the normal confirmation path for online bookings too.",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    },
+    {
+     "id": "A3",
+     "title": "A receptionist could mark a booking « Payé » without the till",
+     "today": "The « mark as paid » function is still callable directly (the button is hidden, but the function is open).",
+     "proposal": "Make it internal: only the till can mark a booking paid.",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    },
+    {
+     "id": "A4",
+     "title": "Old function can undo a payment without refund",
+     "today": "`unlink_from_pos_order` puts a paid booking back to « Confirmé » without any refund (breaks the rule « paid = only cancelled by refund »). Only tests use it.",
+     "proposal": "Remove it.",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    }
+   ]
+  },
+  {
+   "id": "B",
+   "title": "Remove — things nobody can reach anymore",
+   "items": [
+    {
+     "id": "B1",
+     "title": "Group creation / « Ajouter des personnes » wizard",
+     "today": "Only reachable from the group screen we removed. ~330 lines + translations. Tests still use it.",
+     "proposal": "Remove after moving its ~18 tests to the companion path (Gantt → Nouveau).",
+     "effort": "M",
+     "risk": "Low",
+     "recommended": true
+    },
+    {
+     "id": "B2",
+     "title": "Group list/form screens and their dead buttons",
+     "today": "Group form/list/search and « Confirmer le groupe », « Ajouter des personnes », « Voir les réservations » are unreachable. « Annuler les impayés », « Restaurer », « Déplacer le groupe » are still used from the booking form.",
+     "proposal": "Remove the screens and dead buttons; keep the three that are used.",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    },
+    {
+     "id": "B3",
+     "title": "« Attribuer un praticien » wizard",
+     "today": "Its form button was removed yesterday; the till uses its own route. Nothing calls it.",
+     "proposal": "Remove the wizard and its method.",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    },
+    {
+     "id": "B4",
+     "title": "Dead till code",
+     "today": "An old « treatment changes » mode in the bookings list (unreachable since 25/10), 3 unused fields, an empty override, and a duplicated « hide discount » patch.",
+     "proposal": "Remove (no data migration).",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    },
+    {
+     "id": "B5",
+     "title": "Small leftovers",
+     "today": "Duplicate « Commissions » menu, two website routes never called, leftovers from the removed legend, a few unused fields and methods, a stray compiled file.",
+     "proposal": "Remove.",
+     "effort": "S",
+     "risk": "Low",
+     "recommended": true
+    }
+   ]
+  },
+  {
+   "id": "C",
+   "title": "Merge — the same thing coded in several places",
+   "items": [
+    {
+     "id": "C1",
+     "title": "Changing a practitioner (and its commission)",
+     "today": "Handled in 3 places (till, booking save, wizard + treatment exchange). During an exchange the commission can be moved twice. The practitioner list is built 4 ways, so the till can offer someone the form would hide.",
+     "proposal": "One helper for « change practitioner + move commission » and one list of available practitioners, used everywhere.",
+     "effort": "M",
+     "risk": "Med",
+     "recommended": true
+    },
+    {
+     "id": "C2",
+     "title": "Room capacity rules",
+     "today": "Checked in 3 places (booking, website booking API, website free-slot list) that disagree: only the booking frees an absent client's place.",
+     "proposal": "One capacity rule used by all three.",
+     "effort": "M",
+     "risk": "Med",
+     "recommended": true
+    },
+    {
+     "id": "C3",
+     "title": "Phone handling",
+     "today": "The same « clean the phone number » code appears 16 times; the phone is stored 3 ways; the duplicate-contact search loads every contact on each booking (could be slow on the real spa).",
+     "proposal": "One phone helper; one fast search.",
+     "effort": "M",
+     "risk": "Med",
+     "recommended": true
+    },
+    {
+     "id": "C4",
+     "title": "Payment checks in the till done 2–3 times on the server",
+     "today": "The same ticket rules run 2–3 times for one payment, and the contact check is a copy of the booking's.",
+     "proposal": "Keep one pre-payment check + one final check; reuse the booking's contact check.",
+     "effort": "S",
+     "risk": "Med",
+     "recommended": true
+    },
+    {
+     "id": "C5",
+     "title": "Group keeps its own copy of the organizer's contact",
+     "today": "~60 lines keep the group's phone/contact in sync with the organizer's booking; 2 empty groups left on dd-dev.",
+     "proposal": "Read the contact from the organizer's booking; clean empty groups.",
+     "effort": "M",
+     "risk": "Med",
+     "recommended": true
+    },
+    {
+     "id": "C6",
+     "title": "Companion list mirrors each person's booking",
+     "today": "The « people coming together » lines copy 6 fields to/from each person's booking, and the form shows two lists of the same people.",
+     "proposal": "Bigger redesign: one editable list of the group's bookings. Needs a data migration (59 lines on dd-dev). Can wait.",
+     "effort": "L",
+     "risk": "High",
+     "recommended": false
+    }
+   ]
+  },
+  {
+   "id": "D",
+   "title": "Keep (checked, intentional)",
+   "items": [
+    {
+     "id": "D1",
+     "title": "Safety checks on screen + on the server",
+     "today": "Whole quantities, treatment only from its booking, no discount / 0 DH, practitioner before payment, one person per line: one check on screen for a clear message + one on the server so it can't be bypassed.",
+     "proposal": "Keep.",
+     "effort": "—",
+     "risk": "—",
+     "recommended": true
+    },
+    {
+     "id": "D2",
+     "title": "WhatsApp / Twilio code (~900 lines)",
+     "today": "Switched off on dd-dev. Removing it is a business decision, not a cleanup.",
+     "proposal": "Keep for now — your call.",
+     "effort": "—",
+     "risk": "—",
+     "recommended": false
+    }
+   ]
+  }
+ ]
+}
