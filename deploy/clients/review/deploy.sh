@@ -5,11 +5,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 test -z "$(git status --porcelain -- .)" || { echo "Commit the review/ changes first." >&2; exit 2; }
-tar -czf - app.py review.service reviews | ssh corecuity-clients "sudo -n -u corecuity bash -c '
+COPYFILE_DISABLE=1 tar --no-xattrs --exclude="._*" -czf - app.py review.service reviews | ssh corecuity-clients "sudo -n -u corecuity bash -c '
   set -euo pipefail
   D=/srv/clients/corecuity/review
   mkdir -p \$D/data && chmod 700 \$D/data
-  tar -xzf - -C \$D
+  tar -xzf - -C \$D 2>/dev/null
+  find \$D -name "._*" -delete; chmod 750 \$D
   test -f \$D/.env || { umask 077; : > \$D/.env; }
   mkdir -p ~/.config/systemd/user && cp \$D/review.service ~/.config/systemd/user/review.service
   export XDG_RUNTIME_DIR=/run/user/\$(id -u)

@@ -36,7 +36,7 @@ def load_env():
 
 def reviews():
     out = {}
-    for path in sorted(REVIEWS.glob("*.json")):
+    for path in sorted(REVIEWS.glob("[!.]*.json")):  # skip hidden/macOS "._" files
         review = json.loads(path.read_text(encoding="utf-8"))
         out[review["slug"]] = review
     return out
