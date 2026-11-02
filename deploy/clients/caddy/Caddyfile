@@ -414,6 +414,9 @@ contact.corecuity.com {
         not path /api/auth/login /api/auth/logout /api/auth/status
     }
     handle @contact_next {
+        request_body {
+            max_size 128KB
+        }
         reverse_proxy 127.0.0.1:8113 {
             # Use Caddy's parsed visitor IP; never a caller-supplied header.
             header_up X-Real-IP {client_ip}
