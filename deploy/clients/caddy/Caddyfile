@@ -408,6 +408,18 @@ contact.corecuity.com {
     import security_headers
     encode zstd gzip
 
+    # Next.js foundation alongside the existing public booklet and editor.
+    @contact_next {
+        path /login /security /verify /app /app/* /_next/* /api/booklets /api/booklets/* /api/health /api/auth/*
+        not path /api/auth/login /api/auth/logout /api/auth/status
+    }
+    handle @contact_next {
+        reverse_proxy 127.0.0.1:8113 {
+            # Use Caddy's parsed visitor IP; never a caller-supplied header.
+            header_up X-Real-IP {client_ip}
+        }
+    }
+
     # Static assets wire-speed cache
     handle /assets/* {
         root * /var/www/corecuity-contact
