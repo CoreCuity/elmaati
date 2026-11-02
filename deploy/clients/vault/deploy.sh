@@ -45,7 +45,7 @@ REMOTE
 fi
 
 echo "── 3/4 start"
-ssh "$HOST" "cd /srv/clients/vault/app && $AS_VAULT docker compose up -d --remove-orphans 2>&1 | tail -3"
+ssh "$HOST" "$AS_VAULT docker compose --project-directory /srv/clients/vault/app -f /srv/clients/vault/app/compose.yaml up -d --remove-orphans 2>&1 | tail -3"
 for _ in $(seq 1 30); do
   ssh "$HOST" "curl -fsS -o /dev/null http://127.0.0.1:8114/alive" 2>/dev/null && break; sleep 2
 done
