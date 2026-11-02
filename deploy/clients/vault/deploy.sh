@@ -34,8 +34,8 @@ HASH=$(printf '%s\n%s\n' "$TOKEN" "$TOKEN" \
        | script -qec "docker run -it --rm vaultwarden/server:1.37.4 /vaultwarden hash --preset owasp" /dev/null 2>/dev/null \
        | tr -d '\r' | grep -o "\$argon2id\$[^'\" ]*" | head -1)
 [ -n "$HASH" ] || { echo "HASH_FAILED" >&2; exit 1; }
-# Compose env files treat $ as interpolation: double them.
-printf "ADMIN_TOKEN='%s'\n" "${HASH//\$/\$\$}" > /srv/clients/vault/app/.env
+# env_file values are taken literally by this Compose (no $ interpolation): write the hash as is.
+printf "ADMIN_TOKEN='%s'\n" "$HASH" > /srv/clients/vault/app/.env
 chmod 600 /srv/clients/vault/app/.env
 printf 'VAULT_ADMIN_URL=https://vault.corecuity.com/admin\nVAULT_ADMIN_TOKEN=%s\n' "$TOKEN"
 REMOTE
