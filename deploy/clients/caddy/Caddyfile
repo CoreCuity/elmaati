@@ -410,7 +410,7 @@ contact.corecuity.com {
 
     # Next.js candidate, owner setup and service showcase; legacy public data remains authoritative.
     @contact_next {
-        path /login /security /verify /activate /forgot-password /reset-password /service /showcase/* /app /app/* /_next/* /api/booklets /api/booklets/* /api/health /api/auth/*
+        path / /robots.txt /login /security /verify /activate /forgot-password /reset-password /service /showcase/* /app /app/* /_next/* /api/booklets /api/booklets/* /api/health /api/auth/*
         not path /api/auth/login /api/auth/logout /api/auth/status
     }
     handle @contact_next {
