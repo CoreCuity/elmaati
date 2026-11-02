@@ -29,8 +29,10 @@ else
 set -euo pipefail
 umask 077
 TOKEN=$(openssl rand -base64 48 | tr -d '\n/+=' | cut -c1-48)
-HASH=$(printf '%s\n%s\n' "$TOKEN" "$TOKEN" | docker run -i --rm vaultwarden/server:1.37.4 /vaultwarden hash --preset owasp 2>/dev/null \
-       | grep -o "\$argon2id\$[^'\" ]*" | head -1)
+# `vaultwarden hash` reads the password from a terminal only, so `script` provides one.
+HASH=$(printf '%s\n%s\n' "$TOKEN" "$TOKEN" \
+       | script -qec "docker run -it --rm vaultwarden/server:1.37.4 /vaultwarden hash --preset owasp" /dev/null 2>/dev/null \
+       | tr -d '\r' | grep -o "\$argon2id\$[^'\" ]*" | head -1)
 [ -n "$HASH" ] || { echo "HASH_FAILED" >&2; exit 1; }
 # Compose env files treat $ as interpolation: double them.
 printf "ADMIN_TOKEN='%s'\n" "${HASH//\$/\$\$}" > /srv/clients/vault/app/.env
