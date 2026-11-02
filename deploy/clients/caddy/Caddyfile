@@ -408,9 +408,9 @@ contact.corecuity.com {
     import security_headers
     encode zstd gzip
 
-    # Next.js foundation alongside the existing public booklet and editor.
+    # Next.js candidate, owner setup and service showcase; legacy public data remains authoritative.
     @contact_next {
-        path /login /security /verify /app /app/* /_next/* /api/booklets /api/booklets/* /api/health /api/auth/*
+        path /login /security /verify /activate /forgot-password /reset-password /service /showcase/* /app /app/* /_next/* /api/booklets /api/booklets/* /api/health /api/auth/*
         not path /api/auth/login /api/auth/logout /api/auth/status
     }
     handle @contact_next {
