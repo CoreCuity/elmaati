@@ -408,36 +408,15 @@ contact.corecuity.com {
     import security_headers
     encode zstd gzip
 
-    # Next.js candidate, owner setup and service showcase; legacy public data remains authoritative.
-    @contact_next {
-        path / /robots.txt /login /security /verify /activate /forgot-password /reset-password /service /showcase/* /app /app/* /_next/* /api/booklets /api/booklets/* /api/health /api/auth/*
-        not path /api/auth/login /api/auth/logout /api/auth/status
+    # Next.js is authoritative for public booklets and individual owner editing.
+    request_body {
+        max_size 128KB
     }
-    handle @contact_next {
-        request_body {
-            max_size 128KB
-        }
-        reverse_proxy 127.0.0.1:8113 {
-            # Use Caddy's parsed visitor IP; never a caller-supplied header.
-            header_up X-Real-IP {client_ip}
-            # Preserve nonce-protected HTML; prevent edge script/email rewrites.
-            header_down Cache-Control "private, no-store, no-transform"
-        }
-    }
-
-    # Static assets wire-speed cache
-    handle /assets/* {
-        root * /var/www/corecuity-contact
-        file_server
-    }
-    handle /favicon.ico {
-        root * /var/www/corecuity-contact
-        file_server
-    }
-
-    # Dynamic contact cards, vCards, QR SVG, and Admin Dashboard
-    handle {
-        reverse_proxy 127.0.0.1:8110
+    reverse_proxy 127.0.0.1:8113 {
+        # Caddy supplies the visitor identity used by authentication rate limits.
+        header_up X-Real-IP {client_ip}
+        # Preserve nonce-protected HTML; prevent edge script/email rewrites.
+        header_down Cache-Control "private, no-store, no-transform"
     }
 }
 
