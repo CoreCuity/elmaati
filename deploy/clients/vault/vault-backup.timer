@@ -1,0 +1,11 @@
+[Unit]
+Description=Vaultwarden nightly backup (tenant vault)
+
+[Timer]
+# 01:40 server time: before the 02:00–03:00 UTC off-site window (plan §3.1).
+OnCalendar=*-*-* 01:40:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

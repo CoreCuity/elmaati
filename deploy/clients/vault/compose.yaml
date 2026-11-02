@@ -1,0 +1,34 @@
+# Vaultwarden for CoreCuity — tenant `vault` (uid 2011) on corecuity-clients, rootless Docker.
+# Plan: docs/architecture/credentials-vault-plan.md (HQ repo). Classes approved by Najlaa 2026-11-02.
+# Lives at /srv/clients/vault/app/ on the host. Secrets are in .env there (0600), generated on the host only.
+name: vault
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:1.37.4   # pinned; bump deliberately after reading the release notes
+    container_name: vaultwarden
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8114:80"            # loopback only; Caddy terminates TLS
+    volumes:
+      - ../data:/data
+    env_file: .env                      # ADMIN_TOKEN (argon2 hash) — never in git
+    environment:
+      DOMAIN: "https://vault.corecuity.com"
+      SIGNUPS_ALLOWED: "false"          # accounts only by invitation from the admin page
+      INVITATIONS_ALLOWED: "true"
+      SIGNUPS_VERIFY: "true"
+      SHOW_PASSWORD_HINT: "false"
+      PASSWORD_HINTS_ALLOWED: "false"
+      ORG_EVENTS_ENABLED: "true"        # who opened / changed which entry (plan §3.1)
+      EVENTS_DAYS_RETAIN: "730"
+      ORG_CREATION_USERS: "najlaa@corecuity.com,massine@corecuity.com"
+      IP_HEADER: "X-Real-IP"            # set by Caddy from the real client IP
+      LOGIN_RATELIMIT_MAX_BURST: "5"
+      ADMIN_RATELIMIT_MAX_BURST: "3"
+      ADMIN_SESSION_LIFETIME: "15"
+      LOG_LEVEL: "warn"
+      EXTENDED_LOGGING: "true"
+      TZ: "Africa/Casablanca"
+    security_opt:
+      - no-new-privileges:true

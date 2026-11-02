@@ -1,0 +1,6 @@
+[Unit]
+Description=Vaultwarden nightly backup (tenant vault)
+
+[Service]
+Type=oneshot
+ExecStart=/srv/clients/vault/app/vault-backup.sh
