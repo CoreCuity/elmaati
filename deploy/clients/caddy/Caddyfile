@@ -420,6 +420,8 @@ contact.corecuity.com {
         reverse_proxy 127.0.0.1:8113 {
             # Use Caddy's parsed visitor IP; never a caller-supplied header.
             header_up X-Real-IP {client_ip}
+            # Preserve nonce-protected HTML; prevent edge script/email rewrites.
+            header_down Cache-Control "private, no-store, no-transform"
         }
     }
 
