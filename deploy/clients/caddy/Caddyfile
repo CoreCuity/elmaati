@@ -395,6 +395,26 @@ ops.corecuity.com {
     reverse_proxy 127.0.0.1:8106
 }
 
+# --- CoreCuity credentials vault (Vaultwarden), added 2026-11-03 ---
+# Tenant `vault` (uid 2011): rootless Docker, 127.0.0.1:8114, stack in /srv/clients/vault (elmaati repo
+# deploy/clients/vault/). Plan: HQ docs/architecture/credentials-vault-plan.md.
+# security_headers is NOT imported: Vaultwarden sends its own strict set (CSP, Referrer-Policy, …) and
+# appending ours would duplicate them. Only HSTS is added.
+vault.corecuity.com {
+    header Strict-Transport-Security "max-age=86400"
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+
+    # Admin page never public: use an SSH tunnel (ssh -L 8114:127.0.0.1:8114 corecuity-clients → http://localhost:8114/admin).
+    @admin path /admin /admin/*
+    respond @admin 403
+
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8114 {
+        # Real visitor IP for Vaultwarden's login rate limits and event log (IP_HEADER=X-Real-IP).
+        header_up X-Real-IP {client_ip}
+    }
+}
+
 # --- LAMA Lab (WordPress), added 2026-10-23 ---
 # Tenant `lama` (uid 2010): rootless Docker, wordpress on 127.0.0.1:8108, stack in /srv/clients/lama.
 lama.corecuity.com {
