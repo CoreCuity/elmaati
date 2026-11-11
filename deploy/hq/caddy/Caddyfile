@@ -71,3 +71,47 @@ outreach.corecuity.com {
 	}
 	reverse_proxy 127.0.0.1:3042
 }
+
+# Riad Clefs d'Orient luxury demo showcase (Vite multi-page: 6 design directions + V1 comparisons).
+clefsdorient.corecuity.com {
+	encode zstd gzip
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	root * /var/www/clefsdorient/dist
+	try_files {path} {path}.html {path}/index.html
+	file_server
+}
+
+# Paradisanté redesign demo showcase (3 design directions: Minimal, Moderate, Reskin).
+paradisante-preview.corecuity.com {
+	encode zstd gzip
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		Referrer-Policy "no-referrer"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	root * /var/www/paradisante-preview/dist
+	try_files {path} {path}.html {path}/index.html
+	file_server
+}
+
+# Fleet architecture map, founder-authorized 2026-11-11.
+fleet-floor.corecuity.com {
+	encode zstd gzip
+	header {
+		X-Robots-Tag "noindex, nofollow"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	root * /var/www/fleet-floor
+	file_server
+}
