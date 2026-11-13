@@ -475,5 +475,32 @@ paradisante-app.corecuity.com {
     reverse_proxy 127.0.0.1:8112
 }
 
+# Riad Clefs d'Orient — headless WP (tenant clefsdorient, uid 2012). Repo CoreCuity/clefsdorient-wp.
+clefsdorient-api.corecuity.com {
+    @wpmeta path /readme.html /license.txt /wp-config-sample.php
+    respond @wpmeta 404
+
+    import security_headers
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+    request_body {
+        max_size 32MB
+    }
+
+    reverse_proxy 127.0.0.1:8116 {
+        header_down -X-Powered-By
+        header_down -Server
+    }
+}
+
+# Riad Clefs d'Orient — Next.js front (staging, basic auth except /api/revalidate). Repo CoreCuity/clefsdorient-app.
+clefsdorient-app.corecuity.com {
+    import security_headers
+    import auth_clefsdorient_stage
+    header X-Robots-Tag "noindex, nofollow, noarchive"
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8117
+}
+
 
 
