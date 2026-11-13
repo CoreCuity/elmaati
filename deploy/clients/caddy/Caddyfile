@@ -493,10 +493,9 @@ clefsdorient-api.corecuity.com {
     }
 }
 
-# Riad Clefs d'Orient — Next.js front (staging, basic auth except /api/revalidate). Repo CoreCuity/clefsdorient-app.
+# Riad Clefs d'Orient — Next.js front (staging, public + noindex; auth_clefsdorient_stage exists if needed). Repo CoreCuity/clefsdorient-app.
 clefsdorient-app.corecuity.com {
     import security_headers
-    import auth_clefsdorient_stage
     header X-Robots-Tag "noindex, nofollow, noarchive"
     encode zstd gzip
     reverse_proxy 127.0.0.1:8117
